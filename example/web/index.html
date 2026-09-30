@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mobile-app-bridge example</title>
+    <!-- 14. Third-party script: must load without any allowlisting -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-TEST000000"></script>
+    <style>
+      body { font-family: -apple-system, system-ui, sans-serif; margin: 16px; }
+      button, a.button { display: block; width: 100%; margin: 6px 0; padding: 10px; font-size: 15px; cursor: pointer; text-align: center; }
+      #status { padding: 8px; background: #eef; border-radius: 6px; }
+      #log { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; background: #111; color: #0f0; padding: 8px; min-height: 120px; }
+      iframe { width: 100%; height: 90px; border: 1px dashed #999; }
+    </style>
+  </head>
+  <body>
+    <div id="status">loading…</div>
+    <button data-action="echo">2. test.echo</button>
+    <button data-action="camera">3. camera.requestPermission</button>
+    <button data-action="haptics">4. haptics.impact</button>
+    <button data-action="unsupported">5. app.unsupported</button>
+    <button data-action="unknown">6a. unknown method</button>
+    <button data-action="throw">6b. test.throw</button>
+    <button data-action="timeout">7. timeout</button>
+    <button data-action="legacy">11. legacy postMessage</button>
+    <a class="button" href="https://example.com">10a. external link</a>
+    <a class="button" href="/second.html">10b. same-host link</a>
+    <a class="button" href="http://127.0.0.1:5055/second.html">15. inAppHosts link</a>
+    <!-- 14. Third-party iframes: must render in place, never open the browser -->
+    <iframe src="https://www.openstreetmap.org/export/embed.html?bbox=-46.66%2C-23.57%2C-46.62%2C-23.54&amp;layer=mapnik" title="map"></iframe>
+    <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-TEST000" title="gtm" style="height: 20px"></iframe>
+    <iframe src="http://127.0.0.1:5055/iframe.html" title="untrusted iframe"></iframe>
+    <div id="log"></div>
+    <script type="module" src="/dist/main.js"></script>
+  </body>
+</html>

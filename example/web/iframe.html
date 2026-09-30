@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>iframe probe</title></head>
+  <body style="font-family: ui-monospace, monospace; font-size: 11px; margin: 4px">
+    <div id="probe">iframe probe: running…</div>
+    <script>
+      var out = document.getElementById('probe')
+      var badge = !!window.__MOBILE_APP_BRIDGE__
+      var rnwv = !!window.ReactNativeWebView
+      var answered = false
+      window.addEventListener('mobile-app-bridge', function (e) {
+        if (e.detail && e.detail.id === 'iframe-probe') answered = true
+      })
+      if (rnwv) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ bridge: 1, kind: 'req', id: 'iframe-probe', method: 'test.echo', params: { from: 'iframe' } }))
+      }
+      setTimeout(function () {
+        out.textContent = 'iframe probe: badge=' + badge + ' ReactNativeWebView=' + rnwv + ' answered=' + answered
+      }, 2000)
+    </script>
+  </body>
+</html>

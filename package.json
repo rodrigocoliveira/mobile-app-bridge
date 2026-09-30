@@ -53,7 +53,8 @@
     "check:dist": "bun run scripts/check-dist.ts",
     "changeset": "changeset",
     "version": "changeset version && bun install --lockfile-only",
-    "release": "bun run build && bun run check:dist && changeset publish"
+    "release": "bun run build && bun run check:dist && changeset publish",
+    "example:web": "bun run build && bun run example/web/serve.ts"
   },
   "peerDependencies": {
     "expo-constants": ">=17",
