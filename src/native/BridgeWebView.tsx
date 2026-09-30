@@ -2,9 +2,9 @@ import { forwardRef, useCallback, useEffect, useMemo, useRef, type ForwardedRef 
 import { Linking, Platform } from 'react-native'
 import Constants from 'expo-constants'
 import { WebView, type WebViewMessageEvent, type WebViewProps } from 'react-native-webview'
-import type { AppInfo } from '../shared/protocol'
+import type { AppInfo, EventMessage, ResponseMessage } from '../shared/protocol'
 import { resolveAppInfo } from './app-info'
-import type { BridgeEmitter } from './emitter'
+import { isNewDocumentLoad, type BridgeEmitter } from './emitter'
 import { composeNavigationHandler } from './navigation'
 import { routeMessage, type Handlers } from './router'
 import { buildDispatchScript, composeApplicationName, composeInjectedScript } from './scripts'
@@ -70,8 +70,9 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
     [ref],
   )
 
-  const send = useCallback((script: string) => {
-    webViewRef.current?.injectJavaScript(script)
+  // Every native-to-page delivery re-checks the current page's host in-page (see buildDispatchScript).
+  const send = useCallback((message: ResponseMessage | EventMessage) => {
+    webViewRef.current?.injectJavaScript(buildDispatchScript(message, trustedHostsRef.current))
   }, [])
 
   useEffect(() => emitter?.connect(send), [emitter, send])
@@ -103,7 +104,7 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
         if (__DEV__) console.warn(`[mobile-app-bridge] dropped message (${route.reason}) from ${url}`)
         return
       }
-      void route.response.then((response) => send(buildDispatchScript(response)))
+      void route.response.then(send)
     },
     [onMessage, send],
   )
@@ -132,7 +133,7 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
       injectedJavaScriptForMainFrameOnly
       injectedJavaScriptBeforeContentLoadedForMainFrameOnly
       onLoadStart={(event) => {
-        emitter?.setReady(false)
+        if (isNewDocumentLoad(event.nativeEvent)) emitter?.setReady(false)
         onLoadStart?.(event)
       }}
       onLoadEnd={(event) => {

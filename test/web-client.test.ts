@@ -167,13 +167,36 @@ describe('on', () => {
 
   test('drains the in-page buffer filled before the client attached, exactly once', () => {
     const win = appWindow()
-    win.__MOBILE_APP_BRIDGE_BUFFER__ = [{ bridge: 1, kind: 'evt', name: 'push.opened', data: { url: '/a' } }]
-    const client = createBridgeClient(() => win)
+    win.__MOBILE_APP_BRIDGE_BUFFER__ = [{ at: 1_000, detail: { bridge: 1, kind: 'evt', name: 'push.opened', data: { url: '/a' } } }]
+    const client = createBridgeClient(() => win, { now: () => 2_000 })
     const received: unknown[] = []
     client.on('push.opened', (data) => received.push(data))
     client.on('push.opened', (data) => received.push(data))
     expect(received).toEqual([{ url: '/a' }])
     expect(win.__MOBILE_APP_BRIDGE_BUFFER__).toBeUndefined()
+  })
+
+  test('the 10s window for buffered events starts when the page received them, not when the client attached', () => {
+    let clock = 60_000
+    const win = appWindow()
+    win.__MOBILE_APP_BRIDGE_BUFFER__ = [
+      { at: 0, detail: { bridge: 1, kind: 'evt', name: 'push.opened', data: 'stale' } },
+      { at: 55_000, detail: { bridge: 1, kind: 'evt', name: 'push.opened', data: 'fresh' } },
+    ]
+    const client = createBridgeClient(() => win, { now: () => clock })
+    const received: unknown[] = []
+    client.on('push.opened', (data) => received.push(data))
+    expect(received).toEqual(['fresh'])
+
+    const late: unknown[] = []
+    clock = 66_000
+    client.on('app.other', () => {})
+    const win2 = appWindow()
+    win2.__MOBILE_APP_BRIDGE_BUFFER__ = [{ at: 55_000, detail: { bridge: 1, kind: 'evt', name: 'push.opened', data: 'x' } }]
+    const client2 = createBridgeClient(() => win2, { now: () => clock })
+    client2.on('unrelated', () => {})
+    client2.on('push.opened', (data) => late.push(data))
+    expect(late).toEqual([])
   })
 
   test('replays an unsubscribed event to the first subscriber within 10s only', () => {

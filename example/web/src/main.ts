@@ -33,6 +33,11 @@ const actions: Record<string, () => void> = {
   unknown: () => run('6a. unknown', () => bridge.call('nope.nothing')),
   throw: () => run('6b. throw', () => bridge.call('test.throw')),
   timeout: () => run('7. timeout', () => bridge.call('test.sleep', { ms: 3000 }, { timeout: 500 })),
+  pushState: () => {
+    // What Inertia/SPA routers do on every visit; native events must keep flowing afterwards.
+    history.pushState({}, '', `/?visit=${Date.now()}`)
+    write(`17. pushState → ${location.pathname}${location.search}`)
+  },
   legacy: () => {
     const native = (window as unknown as { ReactNativeWebView?: { postMessage(m: string): void } }).ReactNativeWebView
     native?.postMessage(JSON.stringify({ event_name: 'legacyLogin' }))

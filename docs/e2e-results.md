@@ -26,6 +26,8 @@
 | 14 | GA script + third-party iframes | PASS | PASS | `gtag.js` loaded, the OpenStreetMap iframe rendered, the GTM `ns.html` iframe was present, and nothing was sent to the browser. |
 | 15 | `inAppHosts` link | PASS | PASS | `127.0.0.1` page loaded inside the app |
 | 16 | Bridge call from an `inAppHosts` page | PASS | PASS | `TIMEOUT`: the native side dropped it (`untrusted-origin`). That page still sees `isApp=true`, because the badge and user-agent are present, but it cannot call handlers. |
+| 17 | Native events after `history.pushState` (SPA / Inertia navigation) | PASS | PASS (after fix) | Added after the final review. Before the fix, Android stopped delivering `app.stateChange` after one `pushState`. That was reproduced by temporarily reverting the fix. |
+| 18 | Native deliveries into an `inAppHosts` page | PASS* | PASS | During a screen-off/on cycle the trusted `localhost/second.html` received `app.stateChange`, while `127.0.0.1/second.html` received nothing. *iOS is covered by the same in-page guard and by unit tests; its screen-cycle run was Android-only. |
 
 ## Scenario 12 finding (the spec's open question)
 
@@ -53,3 +55,13 @@
 **Re-measured.** Over 7 cold starts, `isApp=true` 7 times, while the badge was still lost once. On iOS, calls and the early event still worked, and nothing was duplicated.
 
 A side effect: backends can now detect the app from the `User-Agent` header.
+
+## Final-review fixes (verified end to end)
+
+**C1: Android readiness.** react-native-webview fires `onLoadStart` from `doUpdateVisitedHistory`, so it also fires on every `pushState`/`replaceState`. That paused the emitter queue for good.
+- Fix: only a load start with `loading !== false` pauses the queue (`isNewDocumentLoad`). The same rule stops iOS from pausing on downloads, whose `onLoadStart` fires at navigation-policy time.
+- Verified: scenario 17 on both platforms.
+
+**I2: one-way trust.** Responses and events are now dispatched through a script that checks `location.hostname` against `trustedHosts` in-page before firing. Verified by scenario 18.
+
+**I1: stale replay.** Entries in the in-page buffer carry the time they arrived. The web client's 10-second replay window is measured from that time, not from when the client attached. Covered by unit tests.

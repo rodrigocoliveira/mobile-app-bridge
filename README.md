@@ -88,6 +88,7 @@ export default function Main() {
 
 - **Hosts are matched exactly on the hostname.** `*.brand.com` matches subdomains, but not `brand.com` itself and not `evilbrand.com`. URL tricks such as `https://app.brand.com@evil.io` or `https://evil.io\@app.brand.com` resolve to the real host.
 - **Only `trustedHosts` can call handlers.** Messages from any other origin are dropped (with a warning in `__DEV__`).
+- **Only `trustedHosts` pages receive responses and events.** Every native-to-page delivery re-checks `location.hostname` in-page, so an `inAppHosts` or third-party page never sees push payloads.
 - **Default navigation policy:**
   1. An http(s) URL on a `trustedHosts` or `inAppHosts` host loads in the app.
   2. Any http(s) **iframe** loads in place. This keeps reCAPTCHA, maps, GTM and payment widgets working.

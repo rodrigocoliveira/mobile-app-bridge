@@ -1,23 +1,22 @@
 import type { EventMessage } from '../shared/protocol'
-import { buildDispatchScript } from './scripts'
 
 export interface BridgeEmitter {
   /** Sends an event to the page. Queued until the page has finished loading. */
   emit(name: string, data?: unknown): void
   /** @internal Called by BridgeWebView. */
-  connect(send: (script: string) => void): () => void
+  connect(send: (message: EventMessage) => void): () => void
   /** @internal Called by BridgeWebView on load start (false) and load end (true). */
   setReady(ready: boolean): void
 }
 
 export function createEmitterCore(): BridgeEmitter {
   const queue: EventMessage[] = []
-  let send: ((script: string) => void) | null = null
+  let send: ((message: EventMessage) => void) | null = null
   let ready = false
 
   function flush() {
     if (!send || !ready) return
-    while (queue.length > 0) send(buildDispatchScript(queue.shift()!))
+    while (queue.length > 0) send(queue.shift()!)
   }
 
   return {
@@ -43,4 +42,13 @@ export function createEmitterCore(): BridgeEmitter {
       flush()
     },
   }
+}
+
+/**
+ * react-native-webview fires onLoadStart for more than new documents: on Android for every
+ * history.pushState/replaceState (Inertia, SPA routers), on iOS before a download that never
+ * produces onLoadEnd. Those arrive with `loading: false` and must not pause the queue.
+ */
+export function isNewDocumentLoad(nativeEvent: { loading?: boolean }): boolean {
+  return nativeEvent.loading !== false
 }

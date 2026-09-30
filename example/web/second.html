@@ -5,9 +5,14 @@
     <h1 id="second">Second page</h1>
     <p id="host"></p>
     <p id="probe">bridge probe: running…</p>
+    <p id="leak">no native deliveries received</p>
     <a href="http://localhost:5055/" style="cursor: pointer">Back</a>
     <script type="module">
       import { bridge } from '/dist/web/index.js'
+      // Native-to-page deliveries must never reach an untrusted (inAppHosts) page.
+      window.addEventListener('mobile-app-bridge', (e) => {
+        document.getElementById('leak').textContent = 'native delivery received: ' + JSON.stringify(e.detail)
+      })
       document.getElementById('host').textContent = 'host=' + location.hostname + ' isApp=' + bridge.isApp
       bridge.call('test.echo', { from: 'second' }, { timeout: 1500 })
         .then((r) => { document.getElementById('probe').textContent = 'bridge probe: answered ' + JSON.stringify(r) })

@@ -62,22 +62,22 @@ export function createBridgeClient(
     undelivered = undelivered.filter((entry) => entry.receivedAt >= cutoff)
   }
 
-  function deliverEvent(message: EventMessage) {
+  function deliverEvent(message: EventMessage, receivedAt: number) {
     const subscribers = listeners.get(message.name)
     if (subscribers && subscribers.size > 0) {
       for (const listener of [...subscribers]) listener(message.data)
       return
     }
     // Nobody is listening yet (e.g. cold start): keep it briefly for the first subscriber.
+    undelivered.push({ message, receivedAt })
     pruneUndelivered()
-    undelivered.push({ message, receivedAt: now() })
     if (undelivered.length > MAX_UNDELIVERED) undelivered.shift()
   }
 
-  function handle(detail: unknown) {
+  function handle(detail: unknown, receivedAt = now()) {
     if (!isBridgeMessage(detail)) return
     if (detail.kind === 'evt') {
-      deliverEvent(detail)
+      deliverEvent(detail, receivedAt)
       return
     }
     if (detail.kind !== 'res') return
@@ -98,7 +98,11 @@ export function createBridgeClient(
     // Events the badge script buffered before this client existed.
     const buffered = win.__MOBILE_APP_BRIDGE_BUFFER__
     win.__MOBILE_APP_BRIDGE_BUFFER__ = undefined
-    if (Array.isArray(buffered)) for (const detail of buffered) handle(detail)
+    if (!Array.isArray(buffered)) return
+    for (const entry of buffered) {
+      const { at, detail } = (entry ?? {}) as { at?: unknown; detail?: unknown }
+      handle(detail, typeof at === 'number' ? at : now())
+    }
   }
 
   function nextId(): string {

@@ -1,16 +1,18 @@
 import { describe, expect, test } from 'bun:test'
-import { createEmitterCore } from '../src/native/emitter'
+import { createEmitterCore, isNewDocumentLoad } from '../src/native/emitter'
 
-function names(scripts: string[]) {
-  return scripts.map((s) => /"name":"([^"]+)"/.exec(s)?.[1])
+import type { EventMessage } from '../src/shared/protocol'
+
+function names(messages: EventMessage[]) {
+  return messages.map((message) => message.name)
 }
 
 describe('createEmitterCore', () => {
   test('queues events until connected and ready, then flushes in order', () => {
     const emitter = createEmitterCore()
-    const sent: string[] = []
+    const sent: EventMessage[] = []
     emitter.emit('a')
-    emitter.connect((s) => sent.push(s))
+    emitter.connect((m) => sent.push(m))
     emitter.emit('b', { x: 1 })
     expect(sent).toHaveLength(0)
     emitter.setReady(true)
@@ -21,8 +23,8 @@ describe('createEmitterCore', () => {
 
   test('queues again while the page reloads and never duplicates', () => {
     const emitter = createEmitterCore()
-    const sent: string[] = []
-    emitter.connect((s) => sent.push(s))
+    const sent: EventMessage[] = []
+    emitter.connect((m) => sent.push(m))
     emitter.setReady(true)
     emitter.emit('before')
     emitter.setReady(false) // onLoadStart of a reload
@@ -36,28 +38,39 @@ describe('createEmitterCore', () => {
 
   test('disconnect stops sending and keeps queuing without throwing', () => {
     const emitter = createEmitterCore()
-    const sent: string[] = []
-    const disconnect = emitter.connect((s) => sent.push(s))
+    const sent: EventMessage[] = []
+    const disconnect = emitter.connect((m) => sent.push(m))
     emitter.setReady(true)
     disconnect()
     expect(() => emitter.emit('queued')).not.toThrow()
     expect(sent).toHaveLength(0)
-    const later: string[] = []
-    emitter.connect((s) => later.push(s))
+    const later: EventMessage[] = []
+    emitter.connect((m) => later.push(m))
     emitter.setReady(true)
     expect(names(later)).toEqual(['queued'])
   })
 
   test('a stale disconnect does not detach a newer connection', () => {
     const emitter = createEmitterCore()
-    const first: string[] = []
-    const second: string[] = []
-    const disconnectFirst = emitter.connect((s) => first.push(s))
-    emitter.connect((s) => second.push(s))
+    const first: EventMessage[] = []
+    const second: EventMessage[] = []
+    const disconnectFirst = emitter.connect((m) => first.push(m))
+    emitter.connect((m) => second.push(m))
     disconnectFirst()
     emitter.setReady(true)
     emitter.emit('x')
     expect(first).toHaveLength(0)
     expect(names(second)).toEqual(['x'])
+  })
+})
+
+describe('isNewDocumentLoad', () => {
+  test('a load start reported while the page is still loading pauses the queue', () => {
+    expect(isNewDocumentLoad({ loading: true })).toBe(true)
+    expect(isNewDocumentLoad({})).toBe(true)
+  })
+
+  test('a load start on an already loaded page does not pause it (Android pushState/replaceState, iOS downloads)', () => {
+    expect(isNewDocumentLoad({ loading: false })).toBe(false)
   })
 })

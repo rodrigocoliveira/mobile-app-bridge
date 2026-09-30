@@ -31,7 +31,9 @@ describe('buildBadgeScript', () => {
     expect(win.__MOBILE_APP_BRIDGE__).toEqual(INFO)
     win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'x', data: 1 } }))
     win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'res', id: 'a', ok: true } }))
-    expect(win.__MOBILE_APP_BRIDGE_BUFFER__).toEqual([{ bridge: 1, kind: 'evt', name: 'x', data: 1 }])
+    const buffer = win.__MOBILE_APP_BRIDGE_BUFFER__ as Array<{ at: number; detail: unknown }>
+    expect(buffer.map((entry) => entry.detail)).toEqual([{ bridge: 1, kind: 'evt', name: 'x', data: 1 }])
+    expect(Math.abs(buffer[0]!.at - Date.now())).toBeLessThan(1000)
 
     win.__MOBILE_APP_BRIDGE_BUFFER__ = undefined // what the web client does on attach
     expect(() => win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'y' } }))).not.toThrow()
@@ -42,9 +44,9 @@ describe('buildBadgeScript', () => {
     for (let i = 0; i < BUFFER_LIMIT + 3; i++) {
       win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'x', data: i } }))
     }
-    const buffer = win.__MOBILE_APP_BRIDGE_BUFFER__ as Array<{ data: number }>
+    const buffer = win.__MOBILE_APP_BRIDGE_BUFFER__ as Array<{ detail: { data: number } }>
     expect(buffer).toHaveLength(BUFFER_LIMIT)
-    expect(buffer[0]!.data).toBe(3)
+    expect(buffer[0]!.detail.data).toBe(3)
   })
 })
 
@@ -54,7 +56,7 @@ describe('badge script idempotence (re-injected after load on Android)', () => {
     win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'a' } }))
     run(buildBadgeScript(INFO), win)
     win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'b' } }))
-    expect((win.__MOBILE_APP_BRIDGE_BUFFER__ as Array<{ name: string }>).map((e) => e.name)).toEqual(['a', 'b'])
+    expect((win.__MOBILE_APP_BRIDGE_BUFFER__ as Array<{ detail: { name: string } }>).map((e) => e.detail.name)).toEqual(['a', 'b'])
   })
 
   test('does not recreate the buffer after the web client drained it', () => {
@@ -86,13 +88,32 @@ describe('user-agent marker', () => {
 })
 
 describe('buildDispatchScript', () => {
-  test('dispatches the message as a mobile-app-bridge CustomEvent', () => {
+  function dispatchOn(hostname: string, trustedHosts: string[], message: object) {
     const win = new ScriptWindow()
     const received: unknown[] = []
     win.addEventListener(BRIDGE_EVENT, (e) => received.push((e as CustomEvent).detail))
-    const message = { bridge: 1, kind: 'evt', name: 'x', data: { text: '</script>\u2028' } } as const
-    run(buildDispatchScript(message), win)
-    expect(received).toEqual([message])
+    new Function('window', 'CustomEvent', 'location', buildDispatchScript(message as never, trustedHosts))(win, CustomEvent, { hostname })
+    return received
+  }
+
+  test('dispatches the message as a mobile-app-bridge CustomEvent on a trusted page', () => {
+    const message = { bridge: 1, kind: 'evt', name: 'x', data: { text: '</script>\u2028' } }
+    expect(dispatchOn('localhost', ['localhost'], message)).toEqual([message])
+  })
+
+  test('never dispatches into a page whose host is not trusted (inAppHosts, third parties)', () => {
+    const message = { bridge: 1, kind: 'evt', name: 'push.opened', data: { token: 'secret' } }
+    expect(dispatchOn('127.0.0.1', ['localhost'], message)).toEqual([])
+    expect(dispatchOn('files.s3.amazonaws.com', ['app.brand.com'], message)).toEqual([])
+    expect(dispatchOn('evilbrand.com', ['*.brand.com'], message)).toEqual([])
+    expect(dispatchOn('brand.com', ['*.brand.com'], message)).toEqual([])
+  })
+
+  test('matches hosts like the native side: case-insensitive, trailing dot, wildcard subdomains', () => {
+    const message = { bridge: 1, kind: 'evt', name: 'x' }
+    expect(dispatchOn('APP.BRAND.COM', ['app.brand.com'], message)).toHaveLength(1)
+    expect(dispatchOn('app.brand.com.', ['app.brand.com'], message)).toHaveLength(1)
+    expect(dispatchOn('a.b.brand.com', ['*.brand.com'], message)).toHaveLength(1)
   })
 })
 

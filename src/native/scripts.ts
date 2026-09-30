@@ -24,7 +24,8 @@ export function buildBadgeScript(info: AppInfo): string {
     `    var buffer = window.${BUFFER_KEY};`,
     '    var detail = event && event.detail;',
     "    if (!buffer || !detail || detail.kind !== 'evt') return;",
-    '    buffer.push(detail);',
+    // Stamped so the web client measures its replay window from arrival, not from when it attached.
+    '    buffer.push({ at: Date.now(), detail: detail });',
     `    if (buffer.length > ${BUFFER_LIMIT}) buffer.shift();`,
     '  });',
     '})();',
@@ -41,11 +42,25 @@ export function composeApplicationName(info: AppInfo, consumerName?: string): st
   return [consumerName, buildUserAgentMarker(info)].filter(Boolean).join(' ')
 }
 
-export function buildDispatchScript(message: ResponseMessage | EventMessage): string {
-  return (
-    `(function () { window.dispatchEvent(new CustomEvent(${JSON.stringify(BRIDGE_EVENT)}, ` +
-    `{ detail: ${serializeForScript(message)} })); })();\ntrue;`
-  )
+/**
+ * Delivers a response or event to the page, but only if the page's host is trusted: pages that
+ * load in the app without bridge access (inAppHosts, consumer-allowed third parties) get nothing.
+ * Host matching mirrors isTrustedHostname() in hosts.ts.
+ */
+export function buildDispatchScript(message: ResponseMessage | EventMessage, trustedHosts: readonly string[]): string {
+  return [
+    '(function () {',
+    "  var host = String(location.hostname || '').toLowerCase().replace(/\\.$/, '');",
+    `  var trusted = ${serializeForScript(trustedHosts.map((entry) => entry.toLowerCase()))};`,
+    '  var allowed = trusted.some(function (entry) {',
+    "    if (entry.indexOf('*.') === 0) return host.slice(-(entry.length - 1)) === entry.slice(1);",
+    '    return host === entry;',
+    '  });',
+    '  if (!allowed) return;',
+    `  window.dispatchEvent(new CustomEvent(${JSON.stringify(BRIDGE_EVENT)}, { detail: ${serializeForScript(message)} }));`,
+    '})();',
+    'true;',
+  ].join('\n')
 }
 
 /** Badge first, then the consumer's own script. Separators keep trailing comments harmless. */
