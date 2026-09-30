@@ -79,6 +79,7 @@ bridge.on<T = unknown>(name: string, listener: (data: T) => void): () => void   
 | `TIMEOUT` | no response within `timeout` |
 | `UNKNOWN_METHOD` | the app build has no handler for `method` |
 | `HANDLER_ERROR` | the handler threw without a `code` |
+| `INVALID_PARAMS` | `params` cannot be JSON-serialized (rejects immediately, nothing sent) |
 
 ## 5. Native API (`/native`)
 
