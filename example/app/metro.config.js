@@ -8,7 +8,6 @@ const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const config = getDefaultConfig(projectRoot)
 config.watchFolders = [libraryRoot]
 config.resolver.nodeModulesPaths = [path.resolve(projectRoot, 'node_modules')]
-config.resolver.disableHierarchicalLookup = true
 config.resolver.blockList = [new RegExp(`^${escape(path.join(libraryRoot, 'node_modules'))}\\/.*`)]
 
 module.exports = config
