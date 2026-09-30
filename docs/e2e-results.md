@@ -1,67 +1,55 @@
 # End-to-end results — v0.1
 
 - **Date:** 2026-09-30
-- **App:** `example/app`, which runs in Expo Go. Versions: Expo SDK 57.0.26, react-native 0.86.3, react-native-webview 13.16.1.
-- **Web:** `example/web`. It is served on `http://localhost:5055` (in `trustedHosts`) and `http://127.0.0.1:5055` (in `inAppHosts`, and also used as the untrusted iframe origin).
+- **Final design:** `isApp` = `window.ReactNativeWebView` exists; `emit` is immediate (no queue); data that must not be lost is pulled.
+- **App:** `example/app` in Expo Go. Expo SDK 57.0.26, react-native 0.86.3, react-native-webview 13.16.1.
+- **Web:** `example/web`, served on two hosts:
+  - `http://localhost:5055` is in `trustedHosts`.
+  - `http://127.0.0.1:5055` is in `inAppHosts`, and is also the untrusted iframe origin.
 - **iOS:** iPhone 17 Pro simulator, iOS 26.5, driven with the Claude Code iOS simulator tool.
-- **Android:** `Pixel_3a_API_35` emulator (`sdk_gphone64_arm64`, Android 15), driven with `adb` (`screencap`, `input tap`, `adb reverse tcp:5055` / `tcp:8081`).
+- **Android:** `Pixel_3a_API_35` emulator, Android 15, driven with `adb`.
+- **Automated checks:** the page's **"Run automated checks"** button runs scenarios 2, 4, 6a, 6b, 7 and 8, verifies each result, and reports a summary to the dev server:
 
-| # | Scenario | iOS | Android | Notes |
+  ```
+  auto platform=ios     2=PASS 4=PASS 6a=PASS 6b=PASS 7=PASS 8=PASS
+  auto platform=android 2=PASS 4=PASS 6a=PASS 6b=PASS 7=PASS 8=PASS
+  ```
+
+## Results
+
+"Visual" means the result was read from the page or a native dialog on screen, not from a report.
+
+| # | Scenario | iOS | Android | How checked |
 |---|---|---|---|---|
-| 1 | Badge / `isApp` / info | PASS | PASS (after fix) | Android originally failed intermittently. See "Android injection race" below. |
-| 2 | `test.echo` round-trip | PASS | PASS | `{"hello":"world","n":42}` |
-| 3 | `camera.requestPermission` | PASS | PASS | The native permission dialog was shown and the call resolved `{"granted":true}`. |
-| 4 | `haptics.impact` | PASS | PASS | Resolved `{"style":"medium"}`. Simulators do not vibrate. |
-| 5 | `app.unsupported` | PASS | PASS | Native alert shown |
-| 6a | Unknown method | PASS | PASS | `UNKNOWN_METHOD` |
-| 6b | Handler throws `{ code: 'CUSTOM' }` | PASS | PASS | `CUSTOM: Thrown on purpose` |
-| 7 | Timeout | PASS | PASS | `TIMEOUT` after 500 ms |
-| 8 | Event emitted before page load | PASS | PASS | `test.early` delivered exactly once. It was also delivered exactly once after the badge-script re-run was added. |
-| 9 | `app.stateChange` | PASS | PASS | iOS: `inactive` → `background` → `active`. Android: `background` → `active`. |
-| 10a | External link | PASS | PASS | Safari / Chrome opened `example.com` |
-| 10b | Same-host link | PASS | PASS | Loaded in the app, and the page's bridge call was answered. |
-| 11 | Legacy `{ event_name }` message | PASS | PASS | It reached the consumer `onMessage` banner. |
-| 12 | Untrusted iframe | PASS | PASS | See "Scenario 12 finding" below. |
-| 13 | Page outside the app | PASS | NOT RUN | iOS Safari showed `isApp=false` and `NOT_IN_APP`. Android Chrome stopped at its first-run screen, which requires accepting Google's Terms of Service. That was not accepted on the user's behalf. The same behavior is covered by the iOS run and by unit tests. |
-| 14 | GA script + third-party iframes | PASS | PASS | `gtag.js` loaded, the OpenStreetMap iframe rendered, the GTM `ns.html` iframe was present, and nothing was sent to the browser. |
-| 15 | `inAppHosts` link | PASS | PASS | `127.0.0.1` page loaded inside the app |
-| 16 | Bridge call from an `inAppHosts` page | PASS | PASS | `TIMEOUT`: the native side dropped it (`untrusted-origin`). That page still sees `isApp=true`, because the badge and user-agent are present, but it cannot call handlers. |
-| 17 | Native events after `history.pushState` (SPA / Inertia navigation) | PASS | PASS (after fix) | Added after the final review. Before the fix, Android stopped delivering `app.stateChange` after one `pushState`. That was reproduced by temporarily reverting the fix. |
-| 18 | Native deliveries into an `inAppHosts` page | PASS* | PASS | During a screen-off/on cycle the trusted `localhost/second.html` received `app.stateChange`, while `127.0.0.1/second.html` received nothing. *iOS is covered by the same in-page guard and by unit tests; its screen-cycle run was Android-only. |
+| 1 | `isApp` / info | PASS | PASS | Visual, plus page reports. On Android, 8 of 8 cold starts reported `isApp=true`. |
+| 2 | `test.echo` round-trip | PASS | PASS | Automated |
+| 3 | `camera.requestPermission` | PASS* | PASS | Visual. *iOS was checked in the first round (dialog shown, then `{"granted":true}`). Handler code is unchanged since. |
+| 4 | `haptics.impact` | PASS | PASS | Automated. Simulators do not vibrate. |
+| 5 | `app.unsupported` native alert | PASS* | PASS | Visual. *iOS was checked in the first round; code unchanged since. |
+| 6a | Unknown method → `UNKNOWN_METHOD` | PASS | PASS | Automated |
+| 6b | Handler throws `{ code: 'CUSTOM' }` | PASS | PASS | Automated |
+| 7 | Timeout → `TIMEOUT` | PASS | PASS | Automated |
+| 8 | Page pulls `app.getLaunchInfo` on boot | PASS | PASS | Automated and visual. On Android it was pulled again after a full reload, with the same value. |
+| 9 | `app.stateChange` | PASS | PASS | Visual |
+| 10a | External link opens the system browser | PASS* | PASS | *iOS first round; navigation code unchanged since. |
+| 10b | Same-host link loads in the app, and its calls are answered | PASS* | PASS | *iOS first round |
+| 11 | Legacy `{ event_name }` reaches the consumer `onMessage` | PASS | PASS | Visual (native banner) |
+| 12 | Untrusted iframe cannot call handlers | PASS | PASS | Visual. See the note below. |
+| 13 | Page outside the app → `isApp=false`, calls give `NOT_IN_APP` | PASS | NOT RUN | iOS Safari: automated checks returned `NOT_IN_APP` for every call. Android Chrome requires accepting Google's Terms on first run, which was not done on the user's behalf. |
+| 14 | GA script and third-party iframes load in place | PASS | PASS | Visual (map rendered, `gtag=true`, nothing opened the browser) |
+| 15 | `inAppHosts` link loads inside the app | PASS | PASS | Visual |
+| 16 | Call from an `inAppHosts` page → `TIMEOUT` (dropped natively) | PASS | PASS | Visual |
+| 17 | Events keep arriving after `history.pushState` (Inertia) | PASS | PASS | Visual: `pushState`, then background/foreground; `app.stateChange` arrived. |
+| 18 | `inAppHosts` page never receives native deliveries | PASS | PASS | Visual. With `127.0.0.1/second.html` open, a background/foreground cycle delivered nothing. With the trusted `localhost/second.html` open, the same cycle delivered `app.stateChange` (positive control, Android). |
 
-## Scenario 12 finding (the spec's open question)
+## Notes
 
-**iOS:**
-- The iframe has neither the badge nor `window.ReactNativeWebView`.
-- `answered=false`, and no "SECURITY" alert was shown.
+**Iframes (scenario 12).**
+- On iOS, iframes get neither the badge nor `window.ReactNativeWebView`.
+- On Android they do get `window.ReactNativeWebView`. react-native-webview's `WebMessageListener` reports the iframe's own origin, so our origin check drops the message (`untrusted-origin`).
 
-**Android:**
-- The iframe **does** have `window.ReactNativeWebView`. react-native-webview registers a `WebMessageListener` for all origins (`*`).
-- Its message was dropped with `untrusted-origin`, and the iframe got `answered=false`.
-- Android reports the **sending frame's origin** (`sourceOrigin`, e.g. `http://127.0.0.1:5055`) as `nativeEvent.url`. That is why the host check stops subframes on Android.
+**Android badge race.** react-native-webview on Android injects `injectedJavaScriptBeforeContentLoaded` from `onPageStarted` via `evaluateJavascript`, which races with document creation. In an earlier round the badge was lost in 1 of 7 cold starts against a local page that loads in milliseconds. Two things now contain it:
+- `isApp` no longer depends on the badge.
+- The badge is injected again after load, so `info` is only `null` for a moment in the rare race.
 
-**Conclusion:** the origin check is effective for iframes on both platforms. An iframe served from a **trusted** host, however, could call handlers on Android. The README states that.
-
-## Android injection race (found and fixed during this run)
-
-**Symptom.** On Android the page intermittently showed `isApp=false`. Over 7 cold starts, `window.ReactNativeWebView` was present 7 times, but `window.__MOBILE_APP_BRIDGE__` was missing once.
-
-**Root cause.** react-native-webview 13.16.1 on Android injects `injectedJavaScriptBeforeContentLoaded` from `onPageStarted` via `evaluateJavascript`. That call races with document creation (`RNCWebViewClient.onPageStarted` → `RNCWebView.callInjectedJavaScriptBeforeContentLoaded`).
-
-**Fix, in this package (commit `824850e`):**
-- `BridgeWebView` appends `MobileAppBridge/1 (<platform>; <appVersion>; <buildNumber>)` to the user-agent through `applicationNameForUserAgent`. The user-agent is set natively before any load, so it has no race. The web client falls back to it when the badge is missing.
-- The badge script is idempotent and runs again as `injectedJavaScript` after load. That way the in-page event buffer exists even when the first injection is lost.
-
-**Re-measured.** Over 7 cold starts, `isApp=true` 7 times, while the badge was still lost once. On iOS, calls and the early event still worked, and nothing was duplicated.
-
-A side effect: backends can now detect the app from the `User-Agent` header.
-
-## Final-review fixes (verified end to end)
-
-**C1: Android readiness.** react-native-webview fires `onLoadStart` from `doUpdateVisitedHistory`, so it also fires on every `pushState`/`replaceState`. That paused the emitter queue for good.
-- Fix: only a load start with `loading !== false` pauses the queue (`isNewDocumentLoad`). The same rule stops iOS from pausing on downloads, whose `onLoadStart` fires at navigation-policy time.
-- Verified: scenario 17 on both platforms.
-
-**I2: one-way trust.** Responses and events are now dispatched through a script that checks `location.hostname` against `trustedHosts` in-page before firing. Verified by scenario 18.
-
-**I1: stale replay.** Entries in the in-page buffer carry the time they arrived. The web client's 10-second replay window is measured from that time, not from when the client attached. Covered by unit tests.
+**History.** Between the first and the final design, v0.1 had a user-agent fallback and a queue with an in-page buffer for early events. The queue got stuck after every Android `pushState`, which was reproduced here. Both were removed in favor of the Agendart-style `isApp` rule and the pull pattern.

@@ -12,11 +12,6 @@ export default function App() {
   const [legacyMessage, setLegacyMessage] = useState<string | null>(null)
 
   useEffect(() => {
-    // Emitted before the page exists: exercises the queue + in-page buffer.
-    emitter.emit('test.early', { at: Date.now() })
-  }, [emitter])
-
-  useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => emitter.emit('app.stateChange', { state }))
     return () => subscription.remove()
   }, [emitter])

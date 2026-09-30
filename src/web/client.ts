@@ -3,20 +3,13 @@ import {
   DEFAULT_TIMEOUT,
   ErrorCode,
   isBridgeMessage,
-  USER_AGENT_PRODUCT,
   type AppInfo,
-  type EventMessage,
   type RequestMessage,
 } from '../shared/protocol'
 import { BridgeError } from './errors'
 
-export const UNDELIVERED_TTL_MS = 10_000
-export const MAX_UNDELIVERED = 50
-
 export interface BridgeWindow {
-  navigator?: { userAgent?: string }
   __MOBILE_APP_BRIDGE__?: AppInfo
-  __MOBILE_APP_BRIDGE_BUFFER__?: unknown[]
   ReactNativeWebView?: { postMessage(message: string): void }
   addEventListener(type: string, listener: (event: Event) => void): void
 }
@@ -43,41 +36,25 @@ type Listener = (data: unknown) => void
 
 export function createBridgeClient(
   getWindow: () => BridgeWindow | undefined,
-  options: { now?: () => number } = {},
 ): BridgeClient {
-  const now = options.now ?? Date.now
   const pending = new Map<string, PendingCall>()
   const listeners = new Map<string, Set<Listener>>()
-  let undelivered: Array<{ message: EventMessage; receivedAt: number }> = []
   let attachedTo: BridgeWindow | undefined
   let counter = 0
 
+  /** Inside the app whenever react-native-webview's bridge object exists (same rule as the Agendart bridge). */
   function appWindow(): BridgeWindow | undefined {
     const win = getWindow()
-    return win?.ReactNativeWebView && readInfo(win) ? win : undefined
+    return win?.ReactNativeWebView ? win : undefined
   }
 
-  function pruneUndelivered() {
-    const cutoff = now() - UNDELIVERED_TTL_MS
-    undelivered = undelivered.filter((entry) => entry.receivedAt >= cutoff)
-  }
-
-  function deliverEvent(message: EventMessage, receivedAt: number) {
-    const subscribers = listeners.get(message.name)
-    if (subscribers && subscribers.size > 0) {
-      for (const listener of [...subscribers]) listener(message.data)
-      return
-    }
-    // Nobody is listening yet (e.g. cold start): keep it briefly for the first subscriber.
-    undelivered.push({ message, receivedAt })
-    pruneUndelivered()
-    if (undelivered.length > MAX_UNDELIVERED) undelivered.shift()
-  }
-
-  function handle(detail: unknown, receivedAt = now()) {
+  function handle(detail: unknown) {
     if (!isBridgeMessage(detail)) return
     if (detail.kind === 'evt') {
-      deliverEvent(detail, receivedAt)
+      // Events are fire-and-forget: without a subscriber they are dropped. Anything that must not be
+      // lost (e.g. "app opened from a notification") is exposed as a method the page calls when ready.
+      const subscribers = listeners.get(detail.name)
+      if (subscribers) for (const listener of [...subscribers]) listener(detail.data)
       return
     }
     if (detail.kind !== 'res') return
@@ -94,19 +71,10 @@ export function createBridgeClient(
     if (attachedTo === win) return
     attachedTo = win
     win.addEventListener(BRIDGE_EVENT, (event) => handle((event as CustomEvent).detail))
-
-    // Events the badge script buffered before this client existed.
-    const buffered = win.__MOBILE_APP_BRIDGE_BUFFER__
-    win.__MOBILE_APP_BRIDGE_BUFFER__ = undefined
-    if (!Array.isArray(buffered)) return
-    for (const entry of buffered) {
-      const { at, detail } = (entry ?? {}) as { at?: unknown; detail?: unknown }
-      handle(detail, typeof at === 'number' ? at : now())
-    }
   }
 
   function nextId(): string {
-    return globalThis.crypto?.randomUUID?.() ?? `${now().toString(36)}-${(counter++).toString(36)}`
+    return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${(counter++).toString(36)}`
   }
 
   return {
@@ -115,8 +83,7 @@ export function createBridgeClient(
     },
 
     get info() {
-      const win = appWindow()
-      return win ? readInfo(win) : null
+      return appWindow()?.__MOBILE_APP_BRIDGE__ ?? null
     },
 
     call<T = unknown>(method: string, params?: unknown, callOptions: CallOptions = {}): Promise<T> {
@@ -166,28 +133,9 @@ export function createBridgeClient(
       const typed = listener as Listener
       subscribers.add(typed)
 
-      pruneUndelivered()
-      const replay = undelivered.filter((entry) => entry.message.name === name)
-      if (replay.length > 0) {
-        undelivered = undelivered.filter((entry) => entry.message.name !== name)
-        for (const entry of replay) typed(entry.message.data)
-      }
-
       return () => {
         subscribers.delete(typed)
       }
     },
   }
-}
-
-const USER_AGENT_PATTERN = new RegExp(
-  `${USER_AGENT_PRODUCT.replace('/', '\\/')} \\((ios|android); ([^;()]*); ([^;()]*)\\)`,
-)
-
-/** The injected badge, or the same values from the user-agent when the injection lost its race. */
-function readInfo(win: BridgeWindow): AppInfo | null {
-  if (win.__MOBILE_APP_BRIDGE__) return win.__MOBILE_APP_BRIDGE__
-  const match = USER_AGENT_PATTERN.exec(win.navigator?.userAgent ?? '')
-  if (!match) return null
-  return { platform: match[1] as AppInfo['platform'], appVersion: match[2]!, buildNumber: match[3]! }
 }

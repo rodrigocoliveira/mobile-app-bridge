@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { BRIDGE_EVENT, type AppInfo } from '../src/shared/protocol'
-import { BUFFER_LIMIT, buildBadgeScript, buildDispatchScript, buildUserAgentMarker, composeApplicationName, composeInjectedScript, serializeForScript } from '../src/native/scripts'
+import { buildBadgeScript, buildDispatchScript, composeInjectedScript, serializeForScript } from '../src/native/scripts'
 
 const INFO: AppInfo = { platform: 'ios', appVersion: '1.0.0', buildNumber: '7' }
 
@@ -26,64 +26,16 @@ describe('serializeForScript', () => {
 })
 
 describe('buildBadgeScript', () => {
-  test('sets the badge and buffers events until drained', () => {
+  test('sets the badge and nothing else (no in-page buffer, no listeners)', () => {
     const win = run(buildBadgeScript(INFO))
     expect(win.__MOBILE_APP_BRIDGE__).toEqual(INFO)
-    win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'x', data: 1 } }))
-    win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'res', id: 'a', ok: true } }))
-    const buffer = win.__MOBILE_APP_BRIDGE_BUFFER__ as Array<{ at: number; detail: unknown }>
-    expect(buffer.map((entry) => entry.detail)).toEqual([{ bridge: 1, kind: 'evt', name: 'x', data: 1 }])
-    expect(Math.abs(buffer[0]!.at - Date.now())).toBeLessThan(1000)
-
-    win.__MOBILE_APP_BRIDGE_BUFFER__ = undefined // what the web client does on attach
-    expect(() => win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'y' } }))).not.toThrow()
+    expect('__MOBILE_APP_BRIDGE_BUFFER__' in win).toBe(false)
   })
 
-  test(`caps the buffer at ${BUFFER_LIMIT}`, () => {
+  test('is safe to run twice (re-injected after load for the Android race)', () => {
     const win = run(buildBadgeScript(INFO))
-    for (let i = 0; i < BUFFER_LIMIT + 3; i++) {
-      win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'x', data: i } }))
-    }
-    const buffer = win.__MOBILE_APP_BRIDGE_BUFFER__ as Array<{ detail: { data: number } }>
-    expect(buffer).toHaveLength(BUFFER_LIMIT)
-    expect(buffer[0]!.detail.data).toBe(3)
-  })
-})
-
-describe('badge script idempotence (re-injected after load on Android)', () => {
-  test('a second run keeps the existing buffer and does not double-buffer events', () => {
-    const win = run(buildBadgeScript(INFO))
-    win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'a' } }))
     run(buildBadgeScript(INFO), win)
-    win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'b' } }))
-    expect((win.__MOBILE_APP_BRIDGE_BUFFER__ as Array<{ detail: { name: string } }>).map((e) => e.detail.name)).toEqual(['a', 'b'])
-  })
-
-  test('does not recreate the buffer after the web client drained it', () => {
-    const win = run(buildBadgeScript(INFO))
-    win.__MOBILE_APP_BRIDGE_BUFFER__ = undefined
-    run(buildBadgeScript(INFO), win)
-    expect(win.__MOBILE_APP_BRIDGE_BUFFER__).toBeUndefined()
-  })
-
-  test('installs badge and buffer when the first injection was lost', () => {
-    const win = run(buildBadgeScript(INFO), new ScriptWindow())
     expect(win.__MOBILE_APP_BRIDGE__).toEqual(INFO)
-    expect(win.__MOBILE_APP_BRIDGE_BUFFER__).toEqual([])
-  })
-})
-
-describe('user-agent marker', () => {
-  test('encodes the app info and strips separator characters', () => {
-    expect(buildUserAgentMarker(INFO)).toBe('MobileAppBridge/1 (ios; 1.0.0; 7)')
-    expect(buildUserAgentMarker({ platform: 'android', appVersion: '2.0 (beta; x)', buildNumber: '3' })).toBe(
-      'MobileAppBridge/1 (android; 2.0 beta x; 3)',
-    )
-  })
-
-  test('appends to the consumer applicationNameForUserAgent', () => {
-    expect(composeApplicationName(INFO)).toBe('MobileAppBridge/1 (ios; 1.0.0; 7)')
-    expect(composeApplicationName(INFO, 'BrandApp/3')).toBe('BrandApp/3 MobileAppBridge/1 (ios; 1.0.0; 7)')
   })
 })
 

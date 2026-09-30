@@ -1,14 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { BRIDGE_EVENT, type AppInfo, type RequestMessage } from '../src/shared/protocol'
 import { BridgeError } from '../src/web/errors'
-import { createBridgeClient, MAX_UNDELIVERED, type BridgeWindow } from '../src/web/client'
+import { createBridgeClient, type BridgeWindow } from '../src/web/client'
 
 const INFO: AppInfo = { platform: 'ios', appVersion: '1.2.3', buildNumber: '42' }
 
 class FakeWindow extends EventTarget implements BridgeWindow {
-  navigator?: { userAgent: string }
   __MOBILE_APP_BRIDGE__?: AppInfo
-  __MOBILE_APP_BRIDGE_BUFFER__?: unknown[]
   ReactNativeWebView?: { postMessage(message: string): void }
   posted: RequestMessage[] = []
 }
@@ -34,40 +32,31 @@ function deliver(win: FakeWindow, detail: unknown) {
 }
 
 describe('detection', () => {
-  test('isApp is false without a window, without the badge, or without ReactNativeWebView', () => {
+  test('isApp is true whenever ReactNativeWebView exists, like the Agendart bridge', () => {
     expect(createBridgeClient(() => undefined).isApp).toBe(false)
     expect(createBridgeClient(() => new FakeWindow()).isApp).toBe(false)
     const badgeOnly = new FakeWindow()
     badgeOnly.__MOBILE_APP_BRIDGE__ = INFO
     expect(createBridgeClient(() => badgeOnly).isApp).toBe(false)
+    expect(createBridgeClient(() => appWindow()).isApp).toBe(true)
   })
 
-  test('isApp and info reflect the badge inside the app', () => {
-    const client = createBridgeClient(() => appWindow())
-    expect(client.isApp).toBe(true)
-    expect(client.info).toEqual(INFO)
-    expect(createBridgeClient(() => new FakeWindow()).info).toBeNull()
-  })
-
-  test('falls back to the user-agent when the badge injection was lost (Android race)', () => {
-    const win = new FakeWindow()
-    win.ReactNativeWebView = { postMessage: () => {} }
-    win.navigator = { userAgent: 'Mozilla/5.0 (Linux; Android 15) Chrome/130 Mobile MobileAppBridge/1 (android; 1.2.3; 42)' }
+  test('the badge only feeds info; a lost badge (Android race) keeps isApp true with info null', () => {
+    const win = appWindow()
+    expect(createBridgeClient(() => win).info).toEqual(INFO)
+    win.__MOBILE_APP_BRIDGE__ = undefined
     const client = createBridgeClient(() => win)
     expect(client.isApp).toBe(true)
-    expect(client.info).toEqual({ platform: 'android', appVersion: '1.2.3', buildNumber: '42' })
+    expect(client.info).toBeNull()
   })
 
-  test('a user-agent marker alone, without ReactNativeWebView, is not the app', () => {
-    const win = new FakeWindow()
-    win.navigator = { userAgent: 'Mozilla/5.0 MobileAppBridge/1 (ios; 1.0.0; 1)' }
-    expect(createBridgeClient(() => win).isApp).toBe(false)
-  })
-
-  test('the badge wins over the user-agent when both exist', () => {
+  test('calls work without the badge', async () => {
     const win = appWindow()
-    win.navigator = { userAgent: 'MobileAppBridge/1 (android; 9.9.9; 9)' }
-    expect(createBridgeClient(() => win).info).toEqual(INFO)
+    win.__MOBILE_APP_BRIDGE__ = undefined
+    const client = createBridgeClient(() => win)
+    const promise = client.call('test.echo', 1)
+    deliver(win, { bridge: 1, kind: 'res', id: win.posted[0]!.id, ok: true, result: 1 })
+    expect(await promise).toBe(1)
   })
 
   test('importing the web entry without a window does not throw (SSR)', async () => {
@@ -165,67 +154,14 @@ describe('on', () => {
     expect(received).toEqual([{ state: 'active' }])
   })
 
-  test('drains the in-page buffer filled before the client attached, exactly once', () => {
+  test('events that arrive before anyone subscribes are dropped, not replayed (pull what must not be lost)', () => {
     const win = appWindow()
-    win.__MOBILE_APP_BRIDGE_BUFFER__ = [{ at: 1_000, detail: { bridge: 1, kind: 'evt', name: 'push.opened', data: { url: '/a' } } }]
-    const client = createBridgeClient(() => win, { now: () => 2_000 })
-    const received: unknown[] = []
-    client.on('push.opened', (data) => received.push(data))
-    client.on('push.opened', (data) => received.push(data))
-    expect(received).toEqual([{ url: '/a' }])
-    expect(win.__MOBILE_APP_BRIDGE_BUFFER__).toBeUndefined()
-  })
-
-  test('the 10s window for buffered events starts when the page received them, not when the client attached', () => {
-    let clock = 60_000
-    const win = appWindow()
-    win.__MOBILE_APP_BRIDGE_BUFFER__ = [
-      { at: 0, detail: { bridge: 1, kind: 'evt', name: 'push.opened', data: 'stale' } },
-      { at: 55_000, detail: { bridge: 1, kind: 'evt', name: 'push.opened', data: 'fresh' } },
-    ]
-    const client = createBridgeClient(() => win, { now: () => clock })
-    const received: unknown[] = []
-    client.on('push.opened', (data) => received.push(data))
-    expect(received).toEqual(['fresh'])
-
-    const late: unknown[] = []
-    clock = 66_000
-    client.on('app.other', () => {})
-    const win2 = appWindow()
-    win2.__MOBILE_APP_BRIDGE_BUFFER__ = [{ at: 55_000, detail: { bridge: 1, kind: 'evt', name: 'push.opened', data: 'x' } }]
-    const client2 = createBridgeClient(() => win2, { now: () => clock })
-    client2.on('unrelated', () => {})
-    client2.on('push.opened', (data) => late.push(data))
-    expect(late).toEqual([])
-  })
-
-  test('replays an unsubscribed event to the first subscriber within 10s only', () => {
-    let clock = 0
-    const win = appWindow()
-    const client = createBridgeClient(() => win, { now: () => clock })
+    const client = createBridgeClient(() => win)
     client.on('unrelated', () => {})
-    deliver(win, { bridge: 1, kind: 'evt', name: 'fresh', data: 1 })
-    deliver(win, { bridge: 1, kind: 'evt', name: 'stale', data: 2 })
-
-    clock = 9_000
-    const fresh: unknown[] = []
-    client.on('fresh', (data) => fresh.push(data))
-    expect(fresh).toEqual([1])
-
-    clock = 10_001
-    const stale: unknown[] = []
-    client.on('stale', (data) => stale.push(data))
-    expect(stale).toEqual([])
-  })
-
-  test(`keeps at most ${MAX_UNDELIVERED} undelivered events`, () => {
-    const win = appWindow()
-    const client = createBridgeClient(() => win, { now: () => 0 })
-    client.on('unrelated', () => {})
-    for (let i = 0; i < MAX_UNDELIVERED + 5; i++) deliver(win, { bridge: 1, kind: 'evt', name: 'burst', data: i })
+    deliver(win, { bridge: 1, kind: 'evt', name: 'push.opened', data: 'early' })
     const received: unknown[] = []
-    client.on('burst', (data) => received.push(data))
-    expect(received).toHaveLength(MAX_UNDELIVERED)
-    expect(received[0]).toBe(5)
+    client.on('push.opened', (data) => received.push(data))
+    deliver(win, { bridge: 1, kind: 'evt', name: 'push.opened', data: 'later' })
+    expect(received).toEqual(['later'])
   })
 })

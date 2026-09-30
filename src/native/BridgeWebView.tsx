@@ -4,10 +4,10 @@ import Constants from 'expo-constants'
 import { WebView, type WebViewMessageEvent, type WebViewProps } from 'react-native-webview'
 import type { AppInfo, EventMessage, ResponseMessage } from '../shared/protocol'
 import { resolveAppInfo } from './app-info'
-import { isNewDocumentLoad, type BridgeEmitter } from './emitter'
+import type { BridgeEmitter } from './emitter'
 import { composeNavigationHandler } from './navigation'
 import { routeMessage, type Handlers } from './router'
-import { buildDispatchScript, composeApplicationName, composeInjectedScript } from './scripts'
+import { buildDispatchScript, composeInjectedScript } from './scripts'
 
 type ShouldStartLoadRequest = Parameters<NonNullable<WebViewProps['onShouldStartLoadWithRequest']>>[0]
 
@@ -48,9 +48,6 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
     onShouldStartLoadWithRequest,
     injectedJavaScriptBeforeContentLoaded,
     injectedJavaScript,
-    applicationNameForUserAgent,
-    onLoadStart,
-    onLoadEnd,
     ...webViewProps
   } = props
 
@@ -87,10 +84,6 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
   )
   // The badge runs again after load: on Android the before-load injection can lose a race with document creation.
   const injectedAfterLoad = useMemo(() => composeInjectedScript(info, injectedJavaScript), [info, injectedJavaScript])
-  const applicationName = useMemo(
-    () => composeApplicationName(info, applicationNameForUserAgent),
-    [info, applicationNameForUserAgent],
-  )
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -129,17 +122,8 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
       onShouldStartLoadWithRequest={handleShouldStart}
       injectedJavaScriptBeforeContentLoaded={injectedBeforeLoad}
       injectedJavaScript={injectedAfterLoad}
-      applicationNameForUserAgent={applicationName}
       injectedJavaScriptForMainFrameOnly
       injectedJavaScriptBeforeContentLoadedForMainFrameOnly
-      onLoadStart={(event) => {
-        if (isNewDocumentLoad(event.nativeEvent)) emitter?.setReady(false)
-        onLoadStart?.(event)
-      }}
-      onLoadEnd={(event) => {
-        emitter?.setReady(true)
-        onLoadEnd?.(event)
-      }}
     />
   )
 })

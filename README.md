@@ -23,8 +23,8 @@ npx expo install react-native-webview expo-constants
 ```ts
 import { bridge, BridgeError } from '@rodrigocoliveira/mobile-app-bridge/web'
 
-bridge.isApp   // true inside the app
-bridge.info    // { platform: 'ios' | 'android', appVersion, buildNumber } or null
+bridge.isApp   // true inside the app (window.ReactNativeWebView exists)
+bridge.info    // { platform: 'ios' | 'android', appVersion, buildNumber }, or null if the badge is missing
 
 const { granted } = await bridge.call<{ granted: boolean }>('camera.requestPermission')
 await bridge.call('billing.purchase', { productId: 'pro' }, { timeout: 120_000 }) // default 30s; 0 disables
@@ -34,7 +34,15 @@ off()
 ```
 
 - **SSR-safe:** importing the module never touches `window`.
-- **Early events are not lost:** an event that no listener has subscribed to yet is kept for up to 10 seconds (maximum 50 events). It is replayed to the first `bridge.on(name)` that subscribes within that window. This is how "app opened from a notification" reaches a page that is still booting.
+- **Events are fire-and-forget.** `bridge.on` only receives events that arrive while it is subscribed.
+- **Pull, don't push.** Anything that must not be lost is a method the page calls when it is ready. For example, the notification that opened the app:
+
+  ```ts
+  // app: store it at startup, expose it as a handler
+  handlers={{ 'push.getInitial': async () => initialNotification }}
+  // page: ask on boot (and again after any reload)
+  const notification = await bridge.call('push.getInitial')
+  ```
 
 `call()` rejects with a `BridgeError` whose `code` is one of the following:
 
@@ -69,7 +77,7 @@ export default function Main() {
   )
 }
 
-// anywhere: emitter.emit('push.opened', { url: '/orders/42' })  // queued until the page has loaded
+// anywhere: emitter.emit('app.stateChange', { state })  // sent now; dropped if no page is there
 ```
 
 `BridgeWebView` accepts every `WebView` prop. It never silently overrides a prop you pass:
@@ -80,7 +88,6 @@ export default function Main() {
 | `onShouldStartLoadWithRequest` | Yours runs first. Return `true`/`false` to decide, or `undefined` to use the default policy. |
 | `injectedJavaScriptBeforeContentLoaded` | The bridge badge first, then your script |
 | `injectedJavaScript` | The badge again (idempotent), then your script |
-| `applicationNameForUserAgent` | Your value, followed by `MobileAppBridge/1 (<platform>; <version>; <build>)` |
 | `injectedJavaScriptForMainFrameOnly` | Always `true`. It cannot be overridden. |
 | `ref` | Forwarded to the underlying `WebView` (`reload`, `goBack`, …) |
 
@@ -99,17 +106,9 @@ export default function Main() {
   - On iOS, iframes do not get `window.ReactNativeWebView` at all.
   - On Android they do, but their messages carry the iframe's own origin and are dropped unless that origin is trusted.
   - **So never embed pages from a trusted host that you do not control.**
-- **What `inAppHosts` pages can see.** They see `bridge.isApp === true`, because the badge and user-agent are present, but they cannot call handlers.
+- **What `inAppHosts` pages can see.** They see `bridge.isApp === true`, because `window.ReactNativeWebView` exists in every page the WebView loads, but they cannot call handlers or receive events.
 
 The results on both platforms are in [`docs/e2e-results.md`](docs/e2e-results.md).
-
-### Server-side detection
-
-The WebView's `User-Agent` header ends with `MobileAppBridge/1 (<platform>; <appVersion>; <buildNumber>)`. Your backend can therefore render app-specific markup from the first byte, for example in a Laravel middleware:
-
-```php
-$inApp = str_contains($request->userAgent() ?? '', 'MobileAppBridge/1');
-```
 
 ## Migrating from a legacy bridge
 

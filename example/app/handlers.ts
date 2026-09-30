@@ -9,7 +9,13 @@ const IMPACT = {
   heavy: Haptics.ImpactFeedbackStyle.Heavy,
 } as const
 
+// Stands in for "the notification that opened the app": captured at startup, before the page exists,
+// and pulled by the page when it is ready. Nothing is pushed early, so nothing can be lost.
+const launchInfo = { launchedAt: Date.now(), via: 'cold-start' }
+
 export const handlers: Handlers = {
+  'app.getLaunchInfo': async () => launchInfo,
+
   'test.echo': async (params: { from?: string } | undefined) => {
     if (params?.from === 'iframe') Alert.alert('SECURITY', 'An untrusted iframe reached a handler')
     return params

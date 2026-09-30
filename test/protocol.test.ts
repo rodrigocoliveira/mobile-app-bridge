@@ -1,11 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { BADGE_KEY, BRIDGE_EVENT, BUFFER_KEY, ErrorCode, isBridgeMessage } from '../src/shared/protocol'
+import { BADGE_KEY, BRIDGE_EVENT, ErrorCode, isBridgeMessage } from '../src/shared/protocol'
 
 describe('constants', () => {
   test('wire names are stable', () => {
     expect(BRIDGE_EVENT).toBe('mobile-app-bridge')
     expect(BADGE_KEY).toBe('__MOBILE_APP_BRIDGE__')
-    expect(BUFFER_KEY).toBe('__MOBILE_APP_BRIDGE_BUFFER__')
     expect(Object.values(ErrorCode).sort()).toEqual(
       ['HANDLER_ERROR', 'INVALID_PARAMS', 'NOT_IN_APP', 'TIMEOUT', 'UNKNOWN_METHOD'],
     )
