@@ -7,7 +7,7 @@ import { resolveAppInfo } from './app-info'
 import type { BridgeEmitter } from './emitter'
 import { composeNavigationHandler } from './navigation'
 import { routeMessage, type Handlers } from './router'
-import { buildDispatchScript, composeInjectedScript } from './scripts'
+import { buildDispatchScript, composeApplicationName, composeInjectedScript } from './scripts'
 
 type ShouldStartLoadRequest = Parameters<NonNullable<WebViewProps['onShouldStartLoadWithRequest']>>[0]
 
@@ -47,6 +47,8 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
     onMessage,
     onShouldStartLoadWithRequest,
     injectedJavaScriptBeforeContentLoaded,
+    injectedJavaScript,
+    applicationNameForUserAgent,
     onLoadStart,
     onLoadEnd,
     ...webViewProps
@@ -75,15 +77,18 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
   useEffect(() => emitter?.connect(send), [emitter, send])
 
   const appInfoKey = JSON.stringify(appInfo ?? {})
-  const injectedScript = useMemo(
-    () =>
-      composeInjectedScript(
-        resolveAppInfo(Platform.OS, Constants.expoConfig, appInfo),
-        injectedJavaScriptBeforeContentLoaded,
-      ),
-    // appInfoKey stands in for appInfo so a new object literal each render does not rebuild the script.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [appInfoKey, injectedJavaScriptBeforeContentLoaded],
+  // appInfoKey stands in for appInfo so a new object literal each render does not rebuild the scripts.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const info = useMemo(() => resolveAppInfo(Platform.OS, Constants.expoConfig, appInfo), [appInfoKey])
+  const injectedBeforeLoad = useMemo(
+    () => composeInjectedScript(info, injectedJavaScriptBeforeContentLoaded),
+    [info, injectedJavaScriptBeforeContentLoaded],
+  )
+  // The badge runs again after load: on Android the before-load injection can lose a race with document creation.
+  const injectedAfterLoad = useMemo(() => composeInjectedScript(info, injectedJavaScript), [info, injectedJavaScript])
+  const applicationName = useMemo(
+    () => composeApplicationName(info, applicationNameForUserAgent),
+    [info, applicationNameForUserAgent],
   )
 
   const handleMessage = useCallback(
@@ -121,7 +126,9 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
       ref={setRef}
       onMessage={handleMessage}
       onShouldStartLoadWithRequest={handleShouldStart}
-      injectedJavaScriptBeforeContentLoaded={injectedScript}
+      injectedJavaScriptBeforeContentLoaded={injectedBeforeLoad}
+      injectedJavaScript={injectedAfterLoad}
+      applicationNameForUserAgent={applicationName}
       injectedJavaScriptForMainFrameOnly
       injectedJavaScriptBeforeContentLoadedForMainFrameOnly
       onLoadStart={(event) => {

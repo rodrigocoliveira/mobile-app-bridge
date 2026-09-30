@@ -3,6 +3,8 @@ export const BRIDGE_EVENT = 'mobile-app-bridge'
 export const BADGE_KEY = '__MOBILE_APP_BRIDGE__'
 export const BUFFER_KEY = '__MOBILE_APP_BRIDGE_BUFFER__'
 export const DEFAULT_TIMEOUT = 30_000
+/** Appended to the WebView user-agent: `MobileAppBridge/1 (<platform>; <appVersion>; <buildNumber>)`. */
+export const USER_AGENT_PRODUCT = 'MobileAppBridge/1'
 
 export const ErrorCode = {
   NOT_IN_APP: 'NOT_IN_APP',

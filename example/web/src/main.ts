@@ -16,7 +16,11 @@ async function run(label: string, fn: () => Promise<unknown>) {
   }
 }
 
-status.textContent = `1. isApp=${bridge.isApp} info=${JSON.stringify(bridge.info)} gtag=${typeof (window as unknown as { dataLayer?: unknown }).dataLayer !== 'undefined' || !!document.querySelector('script[src*="gtag"]')}`
+const probe = window as unknown as { __MOBILE_APP_BRIDGE__?: unknown; ReactNativeWebView?: unknown }
+status.textContent = `badge=${!!probe.__MOBILE_APP_BRIDGE__} rnwv=${!!probe.ReactNativeWebView} | 1. isApp=${bridge.isApp} info=${JSON.stringify(bridge.info)} gtag=${typeof (window as unknown as { dataLayer?: unknown }).dataLayer !== 'undefined' || !!document.querySelector('script[src*="gtag"]')}`
+
+// Diagnostics: lets the e2e run count badge races across reloads.
+void fetch(`/report?badge=${!!probe.__MOBILE_APP_BRIDGE__}&rnwv=${!!probe.ReactNativeWebView}&ua=${navigator.userAgent.includes("MobileAppBridge/1")}&isApp=${bridge.isApp}`).catch(() => {})
 
 bridge.on('test.early', (data) => write(`8. test.early received ${JSON.stringify(data)}`))
 bridge.on('app.stateChange', (data) => write(`9. app.stateChange ${JSON.stringify(data)}`))

@@ -13,6 +13,10 @@ Bun.serve({
   hostname: '0.0.0.0',
   async fetch(request) {
     const { pathname } = new URL(request.url)
+    if (pathname === '/report') {
+      console.log(`report ${new URL(request.url).search}`)
+      return new Response('ok')
+    }
     const path = pathname === '/' ? '/index.html' : pathname
     // Example files first; /dist/* falls back to the package build (used by second.html and its chunks).
     for (const base of [root, join(root, '../..')]) {

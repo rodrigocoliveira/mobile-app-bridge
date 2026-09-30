@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { BRIDGE_EVENT, type AppInfo } from '../src/shared/protocol'
-import { BUFFER_LIMIT, buildBadgeScript, buildDispatchScript, composeInjectedScript, serializeForScript } from '../src/native/scripts'
+import { BUFFER_LIMIT, buildBadgeScript, buildDispatchScript, buildUserAgentMarker, composeApplicationName, composeInjectedScript, serializeForScript } from '../src/native/scripts'
 
 const INFO: AppInfo = { platform: 'ios', appVersion: '1.0.0', buildNumber: '7' }
 
@@ -45,6 +45,43 @@ describe('buildBadgeScript', () => {
     const buffer = win.__MOBILE_APP_BRIDGE_BUFFER__ as Array<{ data: number }>
     expect(buffer).toHaveLength(BUFFER_LIMIT)
     expect(buffer[0]!.data).toBe(3)
+  })
+})
+
+describe('badge script idempotence (re-injected after load on Android)', () => {
+  test('a second run keeps the existing buffer and does not double-buffer events', () => {
+    const win = run(buildBadgeScript(INFO))
+    win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'a' } }))
+    run(buildBadgeScript(INFO), win)
+    win.dispatchEvent(new CustomEvent(BRIDGE_EVENT, { detail: { bridge: 1, kind: 'evt', name: 'b' } }))
+    expect((win.__MOBILE_APP_BRIDGE_BUFFER__ as Array<{ name: string }>).map((e) => e.name)).toEqual(['a', 'b'])
+  })
+
+  test('does not recreate the buffer after the web client drained it', () => {
+    const win = run(buildBadgeScript(INFO))
+    win.__MOBILE_APP_BRIDGE_BUFFER__ = undefined
+    run(buildBadgeScript(INFO), win)
+    expect(win.__MOBILE_APP_BRIDGE_BUFFER__).toBeUndefined()
+  })
+
+  test('installs badge and buffer when the first injection was lost', () => {
+    const win = run(buildBadgeScript(INFO), new ScriptWindow())
+    expect(win.__MOBILE_APP_BRIDGE__).toEqual(INFO)
+    expect(win.__MOBILE_APP_BRIDGE_BUFFER__).toEqual([])
+  })
+})
+
+describe('user-agent marker', () => {
+  test('encodes the app info and strips separator characters', () => {
+    expect(buildUserAgentMarker(INFO)).toBe('MobileAppBridge/1 (ios; 1.0.0; 7)')
+    expect(buildUserAgentMarker({ platform: 'android', appVersion: '2.0 (beta; x)', buildNumber: '3' })).toBe(
+      'MobileAppBridge/1 (android; 2.0 beta x; 3)',
+    )
+  })
+
+  test('appends to the consumer applicationNameForUserAgent', () => {
+    expect(composeApplicationName(INFO)).toBe('MobileAppBridge/1 (ios; 1.0.0; 7)')
+    expect(composeApplicationName(INFO, 'BrandApp/3')).toBe('BrandApp/3 MobileAppBridge/1 (ios; 1.0.0; 7)')
   })
 })
 

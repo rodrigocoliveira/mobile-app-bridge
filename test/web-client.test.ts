@@ -6,6 +6,7 @@ import { createBridgeClient, MAX_UNDELIVERED, type BridgeWindow } from '../src/w
 const INFO: AppInfo = { platform: 'ios', appVersion: '1.2.3', buildNumber: '42' }
 
 class FakeWindow extends EventTarget implements BridgeWindow {
+  navigator?: { userAgent: string }
   __MOBILE_APP_BRIDGE__?: AppInfo
   __MOBILE_APP_BRIDGE_BUFFER__?: unknown[]
   ReactNativeWebView?: { postMessage(message: string): void }
@@ -46,6 +47,27 @@ describe('detection', () => {
     expect(client.isApp).toBe(true)
     expect(client.info).toEqual(INFO)
     expect(createBridgeClient(() => new FakeWindow()).info).toBeNull()
+  })
+
+  test('falls back to the user-agent when the badge injection was lost (Android race)', () => {
+    const win = new FakeWindow()
+    win.ReactNativeWebView = { postMessage: () => {} }
+    win.navigator = { userAgent: 'Mozilla/5.0 (Linux; Android 15) Chrome/130 Mobile MobileAppBridge/1 (android; 1.2.3; 42)' }
+    const client = createBridgeClient(() => win)
+    expect(client.isApp).toBe(true)
+    expect(client.info).toEqual({ platform: 'android', appVersion: '1.2.3', buildNumber: '42' })
+  })
+
+  test('a user-agent marker alone, without ReactNativeWebView, is not the app', () => {
+    const win = new FakeWindow()
+    win.navigator = { userAgent: 'Mozilla/5.0 MobileAppBridge/1 (ios; 1.0.0; 1)' }
+    expect(createBridgeClient(() => win).isApp).toBe(false)
+  })
+
+  test('the badge wins over the user-agent when both exist', () => {
+    const win = appWindow()
+    win.navigator = { userAgent: 'MobileAppBridge/1 (android; 9.9.9; 9)' }
+    expect(createBridgeClient(() => win).info).toEqual(INFO)
   })
 
   test('importing the web entry without a window does not throw (SSR)', async () => {

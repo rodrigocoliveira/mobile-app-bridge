@@ -3,6 +3,7 @@ import {
   DEFAULT_TIMEOUT,
   ErrorCode,
   isBridgeMessage,
+  USER_AGENT_PRODUCT,
   type AppInfo,
   type EventMessage,
   type RequestMessage,
@@ -13,6 +14,7 @@ export const UNDELIVERED_TTL_MS = 10_000
 export const MAX_UNDELIVERED = 50
 
 export interface BridgeWindow {
+  navigator?: { userAgent?: string }
   __MOBILE_APP_BRIDGE__?: AppInfo
   __MOBILE_APP_BRIDGE_BUFFER__?: unknown[]
   ReactNativeWebView?: { postMessage(message: string): void }
@@ -52,7 +54,7 @@ export function createBridgeClient(
 
   function appWindow(): BridgeWindow | undefined {
     const win = getWindow()
-    return win?.__MOBILE_APP_BRIDGE__ && win.ReactNativeWebView ? win : undefined
+    return win?.ReactNativeWebView && readInfo(win) ? win : undefined
   }
 
   function pruneUndelivered() {
@@ -109,7 +111,8 @@ export function createBridgeClient(
     },
 
     get info() {
-      return appWindow()?.__MOBILE_APP_BRIDGE__ ?? null
+      const win = appWindow()
+      return win ? readInfo(win) : null
     },
 
     call<T = unknown>(method: string, params?: unknown, callOptions: CallOptions = {}): Promise<T> {
@@ -171,4 +174,16 @@ export function createBridgeClient(
       }
     },
   }
+}
+
+const USER_AGENT_PATTERN = new RegExp(
+  `${USER_AGENT_PRODUCT.replace('/', '\\/')} \\((ios|android); ([^;()]*); ([^;()]*)\\)`,
+)
+
+/** The injected badge, or the same values from the user-agent when the injection lost its race. */
+function readInfo(win: BridgeWindow): AppInfo | null {
+  if (win.__MOBILE_APP_BRIDGE__) return win.__MOBILE_APP_BRIDGE__
+  const match = USER_AGENT_PATTERN.exec(win.navigator?.userAgent ?? '')
+  if (!match) return null
+  return { platform: match[1] as AppInfo['platform'], appVersion: match[2]!, buildNumber: match[3]! }
 }
