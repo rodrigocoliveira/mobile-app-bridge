@@ -1,0 +1,88 @@
+# Release pipeline (see RELEASING.md).
+#
+# On every push to main, changesets/action/select-mode decides what to do:
+#   - pending changesets  -> open/update the "chore: version packages" PR
+#   - no changesets, but package.json versions not on npm -> publish them
+#   - nothing to do       -> no-op
+#
+# Publishing authenticates with npm trusted publishing (OIDC): there is no NPM_TOKEN
+# secret anywhere. npm verifies that the request comes from this repository and this
+# workflow file, and attaches provenance to the published packages automatically.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Reset permissions; each job declares exactly what it needs.
+permissions: {}
+
+# Never run two releases for the same branch at once.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  select-mode:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.select-mode.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.9'
+      - run: bun install --frozen-lockfile
+      - id: select-mode
+        uses: changesets/action/select-mode@v2
+
+  version:
+    if: needs.select-mode.outputs.mode == 'version'
+    needs: select-mode
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # commit the version bump
+      pull-requests: write   # open/update the version PR
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.9'
+      - run: bun install --frozen-lockfile
+      - uses: changesets/action/version@v2
+        with:
+          # `changeset version` + regenerate bun.lock (it records workspace versions,
+          # so a stale lockfile would fail `bun install --frozen-lockfile` in CI).
+          script: bun run version
+          commit-message: 'chore: version packages'
+          pr-title: 'chore: version packages'
+
+  publish:
+    if: needs.select-mode.outputs.mode == 'publish'
+    needs: select-mode
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push git tags and create GitHub releases
+      id-token: write   # npm trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.9'
+      # `changeset publish` shells out to `npm publish`; trusted publishing needs npm >= 11.5.1,
+      # which ships with Node 24. Bun is still what installs and builds.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - uses: changesets/action/publish@v2
+        with:
+          script: bun run release   # build the package, then `changeset publish`
+          create-github-releases: true
