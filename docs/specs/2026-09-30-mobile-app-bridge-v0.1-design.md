@@ -125,6 +125,10 @@ emitter.emit('app.stateChange', { state: 'active' })
 
 - `useBridgeEmitter()` returns a stable `{ emit(name, data?) }`.
 - If `emit` is called before the page has finished loading, the event is queued. The queue is flushed on the page's first `onLoadEnd` and again after every reload. Example: the app is opened from a notification tap.
+- **In-page buffering.** `onLoadEnd` does not guarantee that the page's code has already called `bridge.on(...)`. To cover the gap:
+  - The badge script also installs `window.__MOBILE_APP_BRIDGE_BUFFER__`, which collects `evt` messages until the web client attaches and drains it.
+  - The web client keeps any event that no listener was subscribed to for up to **10 seconds** (at most 50 events). It replays such an event to the first `on(name)` that subscribes within that window.
+  - This makes a cold-start event such as "app opened from a push" reliable, and stale events expire on their own.
 - An emitter not attached to any `BridgeWebView` keeps queuing. It does not throw.
 
 ### 5.4 Badge values
@@ -177,7 +181,7 @@ Logic lives in pure functions, which keeps it testable with `bun test` and no Re
 
 ### 8.1 `example/`
 
-- `example/app/`: an Expo SDK 55 app that runs in **Expo Go** (no native build). It has a single `BridgeWebView` pointing at the example web page, with these handlers:
+- `example/app/`: an Expo SDK 57 (the current SDK; the one Expo Go supports) app that runs in **Expo Go** (no native build). It has a single `BridgeWebView` pointing at the example web page, with these handlers:
   - `camera.requestPermission` (expo-camera, with the "open settings" fallback)
   - `haptics.impact` (expo-haptics)
   - `app.unsupported` (native `Alert`)
@@ -215,7 +219,7 @@ Claude runs these end to end with the simulator tooling, taps each button and ch
 ## 10. What comes next (not in this spec)
 
 - **Sub-project 2, starterkit `mobile-app/`:**
-  - a fresh Expo SDK 55 shell using this package
+  - a fresh Expo SDK 57 (the current SDK; the one Expo Go supports) shell using this package
   - the example handlers moved into the app
   - web-side usage in `backend/`
   - worktree script ports and env
