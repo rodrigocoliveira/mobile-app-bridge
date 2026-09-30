@@ -135,6 +135,8 @@ Then, in another terminal:
 cd example/app && npm install && npx expo start --ios   # or --android (run `adb reverse tcp:5055 tcp:5055` first)
 ```
 
+The full recipe for running the scenarios on the iOS simulator and Android emulator (including how Claude Code drives them) is in [`docs/device-testing.md`](docs/device-testing.md). In Claude Code, `/device-e2e` runs it.
+
 ## License
 
 MIT
