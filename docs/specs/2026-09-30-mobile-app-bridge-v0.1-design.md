@@ -92,7 +92,8 @@ const webViewRef = useRef<WebView>(null)      // the normal react-native-webview
   ref={webViewRef}
   emitter={emitter}
   source={{ uri: APP_URL }}
-  trustedHosts={['app.brand.com', '*.brand.com']}
+  trustedHosts={['app.brand.com', '*.brand.com']}     // load in the app AND may call handlers
+  inAppHosts={['*.amazonaws.com', 'accounts.google.com']}  // load in the app, NO bridge access (optional)
   handlers={{
     'camera.requestPermission': async () => ({ granted: true }),
     'haptics.impact': async ({ style }) => { /* ... */ },
@@ -142,8 +143,9 @@ emitter.emit('app.stateChange', { state: 'active' })
 
 - **Host matching is exact on `URL.hostname`** (never substring). A `*.brand.com` entry matches subdomains of `brand.com` but not `brand.com` itself, and not `evilbrand.com`. This replaces Agendart's `indexOf` checks, e.g. `indexOf('aa')`.
 - **Requests from untrusted origins are dropped.** `nativeEvent.url` is parsed, and if its hostname is not trusted, the message is ignored and no response is sent (a warning is logged in `__DEV__`).
+- **What the policy does not affect.** `onShouldStartLoadWithRequest` only sees navigations. Scripts, `fetch`/XHR, images and styles (for example Google Analytics' `gtag.js`) load normally and never need listing. Agendart had to allowlist GTM, reCAPTCHA and Memed only because its policy sent every foreign navigation to the browser, including iframe loads on iOS.
 - **Default navigation policy** applies when the consumer returns `undefined`:
-  1. `http(s)` with a trusted hostname: load in the WebView.
+  1. `http(s)` whose hostname is in `trustedHosts` or `inAppHosts`: load in the WebView. Only `trustedHosts` may call handlers. `inAppHosts` covers third-party pages that must stay inside the app, such as file previews, OAuth or 3-D Secure, without granting them the bridge.
   2. `http(s)` in a subframe (`isTopFrame === false`): load, so iframes such as reCAPTCHA or maps keep working. They cannot reach the bridge because the badge is main-frame only and their origin is not trusted.
   3. `about:blank`, `blob:`, `file:`, `javascript:`, `data:` in the top frame: block.
   4. Any other URL (other `http(s)` hosts, `tel:`, `mailto:`, `sms:`, `whatsapp:`, …): `Linking.openURL(url)` and block.
@@ -172,7 +174,7 @@ Logic lives in pure functions, which keeps it testable with `bun test` and no Re
    - an untrusted host produces nothing.
 9. Non-bridge messages are forwarded to the consumer `onMessage`, and so is invalid JSON.
 10. Host matching: exact, wildcard, and look-alike rejection (`evilbrand.com`, `brand.com.evil.io`).
-11. Navigation policy: every case in §6, plus consumer override precedence (`true`, `false`, `undefined`).
+11. Navigation policy: every case in §6, including `inAppHosts`, plus consumer override precedence (`true`, `false`, `undefined`). Message routing drops requests from an `inAppHosts` origin.
 12. Injected script composition: badge first, then consumer script, and the result is valid JS.
 13. Emitter queue: events emitted before load are delivered in order after load. Nothing is lost or duplicated across a reload.
 14. The JS built for `injectJavaScript` safely embeds arbitrary JSON (quotes, `</script>`, U+2028/U+2029).
@@ -192,7 +194,7 @@ Logic lives in pure functions, which keeps it testable with `bun test` and no Re
   It emits `app.stateChange` from `AppState`, and emits a `test.early` event on mount, before the page loads. It also has a consumer `onMessage` that shows legacy messages in a native banner.
 - `example/web/`: a static page served locally, importing the built `/web` bundle. It has one button per scenario and a log panel that shows each result or error.
 
-### 8.2 Scenarios verified on the iOS simulator
+### 8.2 Scenarios verified on the iOS simulator and the Android emulator
 
 Claude runs these end to end with the simulator tooling, taps each button and checks the result.
 
@@ -209,6 +211,11 @@ Claude runs these end to end with the simulator tooling, taps each button and ch
 11. A legacy `{ event_name }` message reaches the consumer `onMessage` banner.
 12. An iframe served from an untrusted host (`127.0.0.1` when `localhost` is trusted) cannot get a response. **Open question to settle here:** it is unverified whether `react-native-webview` reports the iframe's URL or the top frame's URL in `nativeEvent.url` for subframe `postMessage`s. If it is the top frame's, the origin check alone does not stop an iframe. In that case the limitation is documented in the README, and "do not embed untrusted iframes on bridge-enabled pages" becomes an explicit rule.
 13. The same page opened in Safari (outside the app) shows `isApp: false`, and calls reject with `NOT_IN_APP`.
+14. The page loads Google Analytics (`gtag.js`) and third-party iframes (a map embed and a GTM `ns.html` iframe). Neither the app nor the page is sent to the browser, and the map renders.
+15. A link to an `inAppHosts` host (`127.0.0.1` in the example) opens inside the app.
+16. A bridge call made from that `inAppHosts` page rejects with `TIMEOUT`, because the native side drops it.
+
+The same scenarios also run on the Android emulator (driven with `adb`, using `adb reverse` so that `localhost` resolves to the Mac). The exceptions are scenario 3's dialog wording and scenario 13, which uses Chrome instead of Safari. Android does not report `isTopFrame`, so scenario 14 is where platform differences in the iframe policy would show up.
 
 ## 9. Release
 

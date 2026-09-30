@@ -43,6 +43,7 @@
 - Undelivered events are kept for `10_000` ms, with a maximum of `50`.
 - Error codes are `NOT_IN_APP`, `TIMEOUT`, `UNKNOWN_METHOD`, `HANDLER_ERROR` and `INVALID_PARAMS`. The last one is added by this plan (see Task 2) and is used when `params` cannot be JSON-serialized.
 - Host matching is exact on the hostname. `*.x.com` matches subdomains only.
+- Two host lists: `trustedHosts` means the host loads in the app **and** may call handlers. `inAppHosts` (optional) means the host loads in the app **without** bridge access.
 - All code and comments are in English.
 - Commit after each task. End every commit message with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Do NOT create the GitHub repo, push, or publish to npm. Those steps are outward-facing and need the user's explicit approval (Task 9 ends with the handoff).
@@ -798,8 +799,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `isTrustedUrl(url: string, trustedHosts: readonly string[]): boolean`
   - `type NavigationDecision = 'load' | 'block' | 'open-external'`
   - `interface NavigationRequestLike { url: string; isTopFrame?: boolean }`
-  - `decideNavigation(request: NavigationRequestLike, trustedHosts: readonly string[]): NavigationDecision`
-  - `composeNavigationHandler<R extends NavigationRequestLike>(consumer: ((request: R) => boolean | undefined) | undefined, getTrustedHosts: () => readonly string[], openExternal: (url: string) => void): (request: R) => boolean`
+  - `interface HostLists { trustedHosts: readonly string[]; inAppHosts: readonly string[] }`
+  - `decideNavigation(request: NavigationRequestLike, hosts: HostLists): NavigationDecision`
+  - `composeNavigationHandler<R extends NavigationRequestLike>(consumer: ((request: R) => boolean | undefined) | undefined, getHosts: () => HostLists, openExternal: (url: string) => void): (request: R) => boolean`
 
 Note: the parser is regex-based on purpose, because React Native's `URL` polyfill has historically not implemented `hostname`.
 
@@ -908,31 +910,37 @@ export function isTrustedUrl(url: string, trustedHosts: readonly string[]): bool
 
 ```ts
 import { describe, expect, mock, test } from 'bun:test'
-import { composeNavigationHandler, decideNavigation } from '../src/native/navigation'
+import { composeNavigationHandler, decideNavigation, type HostLists } from '../src/native/navigation'
 
-const trusted = ['app.brand.com']
+const hosts: HostLists = { trustedHosts: ['app.brand.com'], inAppHosts: ['*.amazonaws.com'] }
 
 describe('decideNavigation', () => {
   test('loads trusted http(s) in the WebView', () => {
-    expect(decideNavigation({ url: 'https://app.brand.com/x', isTopFrame: true }, trusted)).toBe('load')
-    expect(decideNavigation({ url: 'https://app.brand.com/x' }, trusted)).toBe('load')
+    expect(decideNavigation({ url: 'https://app.brand.com/x', isTopFrame: true }, hosts)).toBe('load')
+    expect(decideNavigation({ url: 'https://app.brand.com/x' }, hosts)).toBe('load')
+  })
+
+  test('loads inAppHosts in the WebView too', () => {
+    expect(decideNavigation({ url: 'https://files.s3.amazonaws.com/a.pdf', isTopFrame: true }, hosts)).toBe('load')
+    expect(decideNavigation({ url: 'https://amazonaws.com.evil.io/', isTopFrame: true }, hosts)).toBe('open-external')
   })
 
   test('loads any http(s) subframe so third-party iframes keep working', () => {
-    expect(decideNavigation({ url: 'https://www.google.com/recaptcha/api2/anchor', isTopFrame: false }, trusted)).toBe('load')
-    expect(decideNavigation({ url: 'about:blank', isTopFrame: false }, trusted)).toBe('load')
+    expect(decideNavigation({ url: 'https://www.google.com/recaptcha/api2/anchor', isTopFrame: false }, hosts)).toBe('load')
+    expect(decideNavigation({ url: 'https://www.googletagmanager.com/ns.html?id=GTM-X', isTopFrame: false }, hosts)).toBe('load')
+    expect(decideNavigation({ url: 'about:blank', isTopFrame: false }, hosts)).toBe('load')
   })
 
   test('blocks dangerous schemes in the top frame', () => {
     for (const url of ['about:blank', 'blob:https://app.brand.com/1', 'file:///etc/passwd', 'javascript:alert(1)', 'data:text/html,hi']) {
-      expect(decideNavigation({ url, isTopFrame: true }, trusted)).toBe('block')
+      expect(decideNavigation({ url, isTopFrame: true }, hosts)).toBe('block')
     }
-    expect(decideNavigation({ url: 'not a url' }, trusted)).toBe('block')
+    expect(decideNavigation({ url: 'not a url' }, hosts)).toBe('block')
   })
 
   test('opens everything else externally', () => {
     for (const url of ['https://example.com', 'https://app.brand.com@evil.io/', 'tel:+551199', 'mailto:a@b.com', 'whatsapp://send?text=hi']) {
-      expect(decideNavigation({ url, isTopFrame: true }, trusted)).toBe('open-external')
+      expect(decideNavigation({ url, isTopFrame: true }, hosts)).toBe('open-external')
     }
   })
 })
@@ -940,8 +948,8 @@ describe('decideNavigation', () => {
 describe('composeNavigationHandler', () => {
   test('consumer true/false wins and skips the default policy', () => {
     const openExternal = mock(() => {})
-    const allow = composeNavigationHandler(() => true, () => trusted, openExternal)
-    const deny = composeNavigationHandler(() => false, () => trusted, openExternal)
+    const allow = composeNavigationHandler(() => true, () => hosts, openExternal)
+    const deny = composeNavigationHandler(() => false, () => hosts, openExternal)
     expect(allow({ url: 'https://example.com' })).toBe(true)
     expect(deny({ url: 'https://app.brand.com' })).toBe(false)
     expect(openExternal).not.toHaveBeenCalled()
@@ -949,7 +957,7 @@ describe('composeNavigationHandler', () => {
 
   test('consumer undefined falls back to the default policy', () => {
     const openExternal = mock((_url: string) => {})
-    const handler = composeNavigationHandler(() => undefined, () => trusted, openExternal)
+    const handler = composeNavigationHandler(() => undefined, () => hosts, openExternal)
     expect(handler({ url: 'https://app.brand.com/x' })).toBe(true)
     expect(handler({ url: 'https://example.com' })).toBe(false)
     expect(openExternal).toHaveBeenCalledWith('https://example.com')
@@ -957,11 +965,11 @@ describe('composeNavigationHandler', () => {
     expect(openExternal).toHaveBeenCalledTimes(1)
   })
 
-  test('works without a consumer and reads trusted hosts lazily', () => {
-    let hosts: string[] = []
-    const handler = composeNavigationHandler(undefined, () => hosts, () => {})
+  test('works without a consumer and reads host lists lazily', () => {
+    let current: HostLists = { trustedHosts: [], inAppHosts: [] }
+    const handler = composeNavigationHandler(undefined, () => current, () => {})
     expect(handler({ url: 'https://app.brand.com' })).toBe(false)
-    hosts = trusted
+    current = hosts
     expect(handler({ url: 'https://app.brand.com' })).toBe(true)
   })
 })
@@ -985,15 +993,24 @@ export interface NavigationRequestLike {
   isTopFrame?: boolean
 }
 
+export interface HostLists {
+  /** Load in the WebView and may call handlers. */
+  trustedHosts: readonly string[]
+  /** Load in the WebView without bridge access (file previews, OAuth, 3-D Secure). */
+  inAppHosts: readonly string[]
+}
+
 const BLOCKED_SCHEMES = new Set(['about', 'blob', 'file', 'javascript', 'data'])
 
-export function decideNavigation(request: NavigationRequestLike, trustedHosts: readonly string[]): NavigationDecision {
+export function decideNavigation(request: NavigationRequestLike, hosts: HostLists): NavigationDecision {
   const scheme = schemeOf(request.url)
   const isHttp = scheme === 'http' || scheme === 'https'
   const isSubframe = request.isTopFrame === false
 
-  if (isHttp && isTrustedUrl(request.url, trustedHosts)) return 'load'
-  // Iframes (reCAPTCHA, maps, payment widgets) must load in place; they never get the badge.
+  if (isHttp && (isTrustedUrl(request.url, hosts.trustedHosts) || isTrustedUrl(request.url, hosts.inAppHosts))) {
+    return 'load'
+  }
+  // Iframes (reCAPTCHA, maps, GTM, payment widgets) must load in place; they never get the badge.
   if (isSubframe && (isHttp || scheme === 'about')) return 'load'
   if (scheme === null || BLOCKED_SCHEMES.has(scheme)) return 'block'
   return 'open-external'
@@ -1001,14 +1018,14 @@ export function decideNavigation(request: NavigationRequestLike, trustedHosts: r
 
 export function composeNavigationHandler<R extends NavigationRequestLike>(
   consumer: ((request: R) => boolean | undefined) | undefined,
-  getTrustedHosts: () => readonly string[],
+  getHosts: () => HostLists,
   openExternal: (url: string) => void,
 ): (request: R) => boolean {
   return (request) => {
     const custom = consumer?.(request)
     if (typeof custom === 'boolean') return custom
 
-    const decision = decideNavigation(request, getTrustedHosts())
+    const decision = decideNavigation(request, getHosts())
     if (decision === 'open-external') openExternal(request.url)
     return decision === 'load'
   }
@@ -1109,6 +1126,12 @@ describe('routeMessage', () => {
     const route = routeMessage(req('t'), 'http://127.0.0.1:5055/iframe.html', { t: () => { called = true } }, trusted)
     expect(route).toEqual({ type: 'drop', reason: 'untrusted-origin' })
     expect(called).toBe(false)
+  })
+
+  test('drops requests from inAppHosts pages: they load in the app but are not trusted', () => {
+    // routeMessage only ever receives trustedHosts; inAppHosts must never be passed to it.
+    const route = routeMessage(req('t'), 'http://127.0.0.1:5055/second.html', { t: () => 'x' }, trusted)
+    expect(route).toEqual({ type: 'drop', reason: 'untrusted-origin' })
   })
 
   test('drops bridge messages that are not requests', () => {
@@ -1612,6 +1635,8 @@ export interface BridgeWebViewProps
   > {
   /** Hostnames allowed to call handlers and to load inside the WebView. `*.x.com` matches subdomains. */
   trustedHosts: readonly string[]
+  /** Hostnames that load inside the WebView WITHOUT bridge access (file previews, OAuth, 3-D Secure). */
+  inAppHosts?: readonly string[]
   /** Methods the page can call with `bridge.call(method, params)`. */
   handlers?: Handlers
   /** From `useBridgeEmitter()`, to send events to the page. */
@@ -1630,6 +1655,7 @@ function assignRef<T>(ref: ForwardedRef<T>, value: T | null) {
 export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function BridgeWebView(props, ref) {
   const {
     trustedHosts,
+    inAppHosts,
     handlers,
     emitter,
     appInfo,
@@ -1644,8 +1670,10 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
   const webViewRef = useRef<WebView | null>(null)
   const handlersRef = useRef<Handlers>(handlers ?? {})
   const trustedHostsRef = useRef(trustedHosts)
+  const inAppHostsRef = useRef<readonly string[]>(inAppHosts ?? [])
   handlersRef.current = handlers ?? {}
   trustedHostsRef.current = trustedHosts
+  inAppHostsRef.current = inAppHosts ?? []
 
   const setRef = useCallback(
     (instance: WebView | null) => {
@@ -1694,7 +1722,7 @@ export const BridgeWebView = forwardRef<WebView, BridgeWebViewProps>(function Br
     () =>
       composeNavigationHandler<ShouldStartLoadRequest>(
         onShouldStartLoadWithRequest,
-        () => trustedHostsRef.current,
+        () => ({ trustedHosts: trustedHostsRef.current, inAppHosts: inAppHostsRef.current }),
         (url) => {
           Linking.openURL(url).catch(() => {})
         },
@@ -1847,7 +1875,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: the built package (`dist/`) from Task 6. The web page imports `../../../dist/web/index.js`. The app imports `@rodrigocoliveira/mobile-app-bridge/native` through a `file:../..` dependency.
 - Produces:
   - a web server at `http://localhost:5055` (trusted), whose `iframe.html` is also reachable as `http://127.0.0.1:5055/iframe.html` (untrusted)
-  - an Expo Go app whose trusted hosts are `['localhost']`
+  - an Expo Go app whose trusted hosts are `['localhost']` and whose in-app hosts are `['127.0.0.1']`
 
 - [ ] **Step 1: Create `example/web/index.html`**
 
@@ -1858,6 +1886,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>mobile-app-bridge example</title>
+    <!-- 14. Third-party script: must load without any allowlisting -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-TEST000000"></script>
     <style>
       body { font-family: -apple-system, system-ui, sans-serif; margin: 16px; }
       button, a.button { display: block; width: 100%; margin: 6px 0; padding: 10px; font-size: 15px; cursor: pointer; text-align: center; }
@@ -1878,6 +1908,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     <button data-action="legacy">11. legacy postMessage</button>
     <a class="button" href="https://example.com">10a. external link</a>
     <a class="button" href="/second.html">10b. same-host link</a>
+    <a class="button" href="http://127.0.0.1:5055/second.html">15. inAppHosts link</a>
+    <!-- 14. Third-party iframes: must render in place, never open the browser -->
+    <iframe src="https://www.openstreetmap.org/export/embed.html?bbox=-46.66%2C-23.57%2C-46.62%2C-23.54&amp;layer=mapnik" title="map"></iframe>
+    <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-TEST000" title="gtm" style="height: 20px"></iframe>
     <iframe src="http://127.0.0.1:5055/iframe.html" title="untrusted iframe"></iframe>
     <div id="log"></div>
     <script type="module" src="/dist/main.js"></script>
@@ -1887,13 +1921,24 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 2: Create `example/web/second.html`**
 
+The same file serves scenario 10b (at `localhost`, which is trusted) and scenarios 15 and 16 (at `127.0.0.1`, which is in `inAppHosts`). The probe shows whether a bridge call from this origin is answered.
+
 ```html
 <!doctype html>
 <html lang="en">
   <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>second</title></head>
   <body style="font-family: system-ui; margin: 16px">
-    <h1 id="second">Second page (same host)</h1>
-    <a href="/" style="cursor: pointer">Back</a>
+    <h1 id="second">Second page</h1>
+    <p id="host"></p>
+    <p id="probe">bridge probe: running…</p>
+    <a href="http://localhost:5055/" style="cursor: pointer">Back</a>
+    <script type="module">
+      import { bridge } from '/dist/web/index.js'
+      document.getElementById('host').textContent = 'host=' + location.hostname + ' isApp=' + bridge.isApp
+      bridge.call('test.echo', { from: 'second' }, { timeout: 1500 })
+        .then((r) => { document.getElementById('probe').textContent = 'bridge probe: answered ' + JSON.stringify(r) })
+        .catch((e) => { document.getElementById('probe').textContent = 'bridge probe: ' + e.code })
+    </script>
   </body>
 </html>
 ```
@@ -1948,7 +1993,7 @@ async function run(label: string, fn: () => Promise<unknown>) {
   }
 }
 
-status.textContent = `1. isApp=${bridge.isApp} info=${JSON.stringify(bridge.info)}`
+status.textContent = `1. isApp=${bridge.isApp} info=${JSON.stringify(bridge.info)} gtag=${typeof (window as unknown as { dataLayer?: unknown }).dataLayer !== 'undefined' || !!document.querySelector('script[src*="gtag"]')}`
 
 bridge.on('test.early', (data) => write(`8. test.early received ${JSON.stringify(data)}`))
 bridge.on('app.stateChange', (data) => write(`9. app.stateChange ${JSON.stringify(data)}`))
@@ -1992,7 +2037,9 @@ Bun.serve({
   async fetch(request) {
     const { pathname } = new URL(request.url)
     const path = pathname === '/' ? '/index.html' : pathname
-    const file = Bun.file(join(root, path))
+    // /dist/web/* is the package build (used by second.html); everything else lives in example/web.
+    const base = path.startsWith('/dist/web/') ? join(root, '../..') : root
+    const file = Bun.file(join(base, path))
     return (await file.exists()) ? new Response(file) : new Response('Not found', { status: 404 })
   },
 })
@@ -2123,6 +2170,7 @@ export default function App() {
         emitter={emitter}
         source={{ uri: WEB_URL }}
         trustedHosts={['localhost']}
+        inAppHosts={['127.0.0.1']}
         handlers={handlers}
         onMessage={(event) => setLegacyMessage(event.nativeEvent.data)}
         style={styles.webview}
@@ -2154,7 +2202,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 8: End-to-end verification on the iOS simulator
+### Task 8: End-to-end verification on the iOS simulator and Android emulator
 
 **Files:**
 - Create: `docs/e2e-results.md`
@@ -2189,11 +2237,34 @@ This task is run by Claude with the iOS simulator tools (`mcp__Claude_Code_iOS_S
 | 9 | press HOME, then reopen Expo Go from the app switcher | `9. app.stateChange {"state":"background"}` and then `{"state":"active"}` |
 | 10a | tap `10a. external link` | Safari opens `example.com`; return to Expo Go |
 | 10b | tap `10b. same-host link` | "Second page (same host)" loads inside the app |
+| 14 | (initial screen) | the map iframe renders, the GTM iframe box is present, `gtag=true`, and nothing opened Safari |
+| 15 | tap `15. inAppHosts link` | "Second page" with `host=127.0.0.1` loads **inside the app** |
+| 16 | (on that page, wait 2s) | `bridge probe: TIMEOUT` (the native side dropped the untrusted call); tap Back |
+| 10b′ | tap `10b. same-host link` again | the probe shows `answered {"from":"second"}` (trusted origin) |
 | 13 | open `http://localhost:5055` in the simulator's Safari (`xcrun simctl openurl booted http://localhost:5055`), tap `2. test.echo` | `isApp=false`, `error NOT_IN_APP` |
 
 - [ ] **Step 3: Record the open question from spec scenario 12.** Write down the iframe probe's `badge`, `ReactNativeWebView` and `answered` values.
   - If a "SECURITY" alert appeared, or `answered=true`, then the host check is not enough for subframes. Record that, and add a limitation note to the README in Task 9: "Do not embed untrusted iframes on bridge-enabled pages".
   - If `answered=false` and there was no alert, record that the subframe request was dropped.
+
+- [ ] **Step 3b: Repeat on the Android emulator**
+
+There is no dedicated Android tool, so drive the emulator with `adb`:
+- **Boot:** `~/Library/Android/sdk/emulator/emulator -avd Pixel_3a_API_35_extension_level_13_arm64-v8a -no-snapshot-save &`, then `adb wait-for-device`.
+- **Make localhost reach the Mac:** `adb reverse tcp:5055 tcp:5055`. Keep the web server running.
+- **Start the app:** `cd example/app && npx expo start --android` (in the background). This installs Expo Go and sets up the Metro reverse.
+- **Look:** `adb exec-out screencap -p > /tmp/android.png`, then read the PNG.
+- **Tap:** `adb shell input tap X Y`, using pixel coordinates from that screenshot.
+- **Other input:**
+  - Home: `adb shell input keyevent KEYCODE_HOME`
+  - App switcher: `adb shell input keyevent KEYCODE_APP_SWITCH`
+  - Back: `adb shell input keyevent KEYCODE_BACK`
+- **Scenario 13:** `adb shell am start -a android.intent.action.VIEW -d http://localhost:5055`, which opens Chrome.
+
+Run every row of the Step 2 table. Android differences to watch for and record:
+- Scenario 3 shows the Android permission dialog.
+- Scenario 14 is the key one, because Android does not send `isTopFrame`, so check whether any iframe was pushed to Chrome.
+- Scenario 12: record whether `ReactNativeWebView` exists inside the iframe on Android.
 
 - [ ] **Step 4: Write `docs/e2e-results.md`**
 
@@ -2201,7 +2272,8 @@ Include:
 - the date
 - the simulator model and iOS version (`xcrun simctl list devices booted`)
 - the Expo SDK and Expo Go version
-- a table with one row per scenario (# / result PASS or FAIL / note)
+- the Android emulator image and API level
+- a table with one row per scenario and two result columns, iOS and Android (# / iOS PASS or FAIL / Android PASS or FAIL / note)
 - the scenario 12 finding
 
 For any FAIL, stop and report it to the user with the screenshot. Do not paper over it.
