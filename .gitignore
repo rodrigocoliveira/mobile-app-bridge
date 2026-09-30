@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.DS_Store
+.superpowers/
+example/web/dist/
+example/app/.expo/
+example/app/node_modules/
+example/app/ios/
+example/app/android/

@@ -1,0 +1,91 @@
+{
+  "name": "@rodrigocoliveira/mobile-app-bridge",
+  "version": "0.0.0",
+  "description": "Promise-based bridge between a web app and the Expo WebView shell that loads it",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rodrigocoliveira/mobile-app-bridge.git"
+  },
+  "homepage": "https://github.com/rodrigocoliveira/mobile-app-bridge#readme",
+  "bugs": "https://github.com/rodrigocoliveira/mobile-app-bridge/issues",
+  "keywords": [
+    "expo",
+    "react-native",
+    "webview",
+    "bridge",
+    "postmessage"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./web": {
+      "import": {
+        "types": "./dist/web/index.d.ts",
+        "default": "./dist/web/index.js"
+      },
+      "require": {
+        "types": "./dist/web/index.d.cts",
+        "default": "./dist/web/index.cjs"
+      }
+    },
+    "./native": {
+      "import": {
+        "types": "./dist/native/index.d.ts",
+        "default": "./dist/native/index.js"
+      },
+      "require": {
+        "types": "./dist/native/index.d.cts",
+        "default": "./dist/native/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test",
+    "check:dist": "bun run scripts/check-dist.ts",
+    "changeset": "changeset",
+    "version": "changeset version && bun install --lockfile-only",
+    "release": "bun run build && bun run check:dist && changeset publish"
+  },
+  "peerDependencies": {
+    "expo-constants": ">=17",
+    "react": ">=18",
+    "react-native": ">=0.76",
+    "react-native-webview": ">=13.10"
+  },
+  "peerDependenciesMeta": {
+    "expo-constants": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
+    },
+    "react-native-webview": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3",
+    "@types/bun": "^1.4.1",
+    "@types/react": "~19.2.0",
+    "expo-constants": "~57.0.20",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-webview": "13.16.1",
+    "typescript": "~5.9.3"
+  }
+}
