@@ -13,7 +13,7 @@ No npm token is stored anywhere. npm trusts this repository's `release.yml` work
    - Commit the generated `.changeset/*.md` with the PR.
    - A PR that only touches docs, the example or CI needs no changeset.
 2. **Merge the PR.** The Release workflow opens (or updates) a PR titled **"chore: version packages"**. It bumps `package.json`, regenerates `bun.lock` and writes the CHANGELOG.
-3. **Review and merge the version PR** when you want to cut a release. The workflow then builds, runs `check:dist`, runs `changeset publish`, pushes the git tag and creates a GitHub release.
+3. **Review and merge the version PR** when you want to cut a release. CI does not run on it: GitHub does not trigger workflows for PRs opened with the Actions token. It only changes versions and the CHANGELOG, and the same code already passed CI on `main`. The workflow then builds, runs `check:dist`, runs `changeset publish`, pushes the git tag and creates a GitHub release.
 
 ## Versioning policy
 
@@ -56,6 +56,8 @@ npm only lets you add a trusted publisher to a package that already exists, so t
    | Repository | `mobile-app-bridge` |
    | Workflow filename | `release.yml` |
    | Environment | leave empty |
+   | Allow `npm publish` | **checked**. Unchecked means stage-only, and `changeset publish` (a plain `npm publish`) is rejected. |
+   | Allow `npm dist-tag` | unchecked |
 
 6. **Lock it down.** On the same page, set *Publishing access* to *Require two-factor authentication and disallow tokens*.
 
