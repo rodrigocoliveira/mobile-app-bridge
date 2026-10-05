@@ -1,6 +1,6 @@
 {
   "name": "@rodrigocoliveira/mobile-app-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Promise-based bridge between a web app and the Expo WebView shell that loads it",
   "license": "MIT",
   "repository": {
