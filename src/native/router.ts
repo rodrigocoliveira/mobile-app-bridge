@@ -71,8 +71,17 @@ function toErrorPayload(error: unknown): ErrorPayload {
     const { code, message } = error as { code?: unknown; message?: unknown }
     return {
       code: typeof code === 'string' ? code : ErrorCode.HANDLER_ERROR,
-      message: typeof message === 'string' ? message : String(error),
+      message: typeof message === 'string' ? message : describe(error),
     }
   }
-  return { code: ErrorCode.HANDLER_ERROR, message: String(error) }
+  return { code: ErrorCode.HANDLER_ERROR, message: describe(error) }
+}
+
+// String() throws on prototype-less objects; a throw here would leave the page waiting until TIMEOUT.
+function describe(value: unknown): string {
+  try {
+    return String(value)
+  } catch {
+    return 'Unknown error'
+  }
 }

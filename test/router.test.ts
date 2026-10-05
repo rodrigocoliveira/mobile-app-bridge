@@ -36,6 +36,8 @@ describe('routeMessage', () => {
     expect(plain).toMatchObject({ ok: false, error: { code: 'HANDLER_ERROR', message: 'plain' } })
     const weird = await respond(req('t'), { t: () => { throw 'a string' } })
     expect(weird).toMatchObject({ ok: false, error: { code: 'HANDLER_ERROR', message: 'a string' } })
+    const bare = await respond(req('t'), { t: () => { throw Object.create(null) } })
+    expect(bare).toMatchObject({ ok: false, error: { code: 'HANDLER_ERROR', message: 'Unknown error' } })
   })
 
   test('answers HANDLER_ERROR when the result is not JSON-serializable', async () => {
